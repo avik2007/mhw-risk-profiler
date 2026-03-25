@@ -1,0 +1,29 @@
+# ---------------------------------------------------------------
+# mhw-risk-profiler .gitignore
+# ---------------------------------------------------------------
+
+# Large datasets and raw model output — never commit
+data/
+
+# Keep research notes local to maintain a clean production engine
+mhw_ai_research/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Jupyter - Keep notebooks for R&D visibility, ignore checkpoints
+.ipynb_checkpoints/
+# *.ipynb  <-- REMOVED FROM IGNORE: We want to show our R&D process
+
+# Docker - Keep Dockerfile tracked, ignore local env files
+*.dockerenv
+.docker/
+
+# Secrets and credentials
+.env
+credentials.json
+
+# Personal GCP infrastructure details — never commit
+mondal-mhw-gcp-info.md

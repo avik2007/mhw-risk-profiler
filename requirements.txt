@@ -1,0 +1,22 @@
+# mhw-risk-profiler Python dependencies
+# Pin minor versions; patch versions resolved at build time.
+
+# -- Earth observation & data I/O --------------------------------
+earthengine-api>=0.1.390
+xarray>=2024.2.0
+dask[complete]>=2024.2.0
+netCDF4>=1.6.5
+zarr>=2.17.0
+
+# -- Machine learning --------------------------------------------
+torch>=2.2.0
+captum>=0.7.0
+
+# -- API serving -------------------------------------------------
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+
+# -- Scientific utilities ----------------------------------------
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.12.0
