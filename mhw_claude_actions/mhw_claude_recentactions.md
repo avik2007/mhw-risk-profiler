@@ -4,6 +4,12 @@
 
 ---
 
+## [2026-03-27] Docker Engine Install — Task 1 Complete
+
+- Removed conflicting Ubuntu-repo Docker packages (docker.io, containerd, runc, etc.) — none were present; system was clean.
+
+---
+
 ## [2026-03-24] Cloud Infrastructure Initialized
 
 ### Actions Completed
