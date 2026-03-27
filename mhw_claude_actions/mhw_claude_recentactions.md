@@ -4,6 +4,52 @@
 
 ---
 
+## [2026-03-27] HYCOM Zarr Verification — Steps 3 & 4 DONE
+
+1. Wrote `scripts/verify_hycom_zarr.py` — fetches HYCOM tile, writes local Zarr, verifies steps 3 & 4.
+2. Ran the script; both steps passed:
+   - **Step 3** (Vertical Coordinate Sanity Check): T/S profile at 43.5°N 70°W printed from
+     `data/processed/hycom_2019-08-01_2019-08-03.zarr`. Thermocline confirmed:
+     19.8°C (0m) → 17.2°C (5m) → 13.2°C (10m) → 10.5°C (20m) → 9.3°C (30m) → 8.8°C (50m) → 7.9°C (75m).
+     NaN at 100–300 m expected (seafloor depth ~100 m in Gulf of Maine).
+   - **Step 4** (Dask Scaling Test): `xr.open_zarr` returned (time=24, depth=11, lat=26, lon=13);
+     all 4 variables confirmed as `dask.array` (lazy, not eager); no OOM.
+     Disk size: 744 KB (well within the MB target).
+
+---
+
+## [2026-03-27] Ensemble Connectivity Smoke Test (Step 2) — Partial
+
+### HYCOM Side: PASSED
+
+1. Created `mhw-risk` conda environment (python=3.11); installed all requirements.
+2. Added `google-cloud-storage>=2.14.0` and `gcsfs>=2024.2.0` to `requirements.txt` (were missing).
+3. Fixed 5 bugs in `harvester.py`:
+   - `ServiceAccountCredentials(email=None)` → extract email from JSON key file.
+   - Corrected WeatherNext 2 GEE asset path: `59572747_3_0` → `weathernext_2_0_0`.
+   - `_export_to_gcs` (GeoTIFF + `xr.open_zarr`) replaced with `_fetch_and_write_zarr` (sampleRectangle compute path + `gs://` URI Zarr write).
+   - `HYCOM_THREDDS_BASE` split into `HYCOM_THREDDS_TS` (ts3z) + `HYCOM_THREDDS_UV` (uv3z) — T/S and currents are separate THREDDS datasets.
+   - CLI arg `--members` renamed to `--n_members` to match docs.
+4. Rewrote `HYCOMLoader.fetch_tile`:
+   - Opens both ts3z and uv3z with `decode_times=False`.
+   - Slices time by raw float index (avoids OPeNDAP hang from full-axis sort).
+   - Converts bbox longitude -180..180 → 0..360 for HYCOM slicing; converts back after load.
+   - Merges T/S and UV datasets before interpolation.
+5. Wrote `scripts/smoke_test_gee.py` — 3-stage standalone connectivity test.
+6. Verification evidence (HYCOM, 2019-08-01 to 2019-08-03, Gulf of Maine 1°×1°):
+   - Dataset: (time=24, depth=11, lat=26, lon=13), all 4 variables loaded.
+   - T/S profile at 43.5°N 70°W: 19.8°C at 0m → 7.9°C at 75m; NaN below (seafloor ~100m).
+   - Thermocline confirmed visible (August Gulf of Maine summer stratification).
+
+### WeatherNext 2 Side: BLOCKED
+
+- GEE auth works (service account authenticated OK).
+- Asset path corrected to `weathernext_2_0_0`.
+- Access denied: the WeatherNext Data Request form must be submitted at developers.google.com/weathernext/guides/earth-engine to whitelist the service account.
+- **User action required**: submit the form, then re-run `python scripts/smoke_test_gee.py`.
+
+---
+
 ## [2026-03-27] Docker Engine Installed and Verified
 
 1. Removed conflicting Ubuntu-repo Docker packages — none were present; system was clean.

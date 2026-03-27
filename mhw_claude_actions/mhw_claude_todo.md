@@ -6,26 +6,23 @@
 
 ## ACTIVE
 
-### GCP Environment Calibration & Ingestion Testing
-**Goal**: Verify that the ingestion engine (`harvester.py`) is physically and technically sound
-end-to-end before proceeding to model training. All sub-steps require printed/logged evidence to pass.
+*None.*
 
-Sub-steps:
-1. ~~**IAM & Auth Verification**: Confirm GEE Service Account and GCS Bucket permissions are active.~~
-   ~~- Validate `GOOGLE_APPLICATION_CREDENTIALS` env var points to a valid service account JSON.~~
-   ~~- Run `earthengine authenticate --quiet` or equivalent SDK check; confirm GCS bucket read/write.~~
-   **DONE** — Smoke test passed 2026-03-24. Auth OK, bucket accessible, contents empty (expected).
-2. **Ensemble Connectivity Test**: Run a smoke test with `harvester.py` using a very small spatial
-   bounding box (e.g., 1°×1° patch) and only 2 ensemble members to verify the GEE-to-GCS Zarr path.
-   - Expected evidence: Zarr store written to `gs://<bucket>/weathernext2/cache/`; Dataset repr printed.
-3. **Vertical Coordinate Sanity Check**: Print a vertical profile of HYCOM Temperature and Salinity
-   from `data/processed/` to verify that interpolation to `TARGET_DEPTHS_M` preserves thermocline structure.
-   - Expected evidence: T/S values at each TARGET_DEPTHS_M level printed; thermocline gradient visible
-     (temperature drops sharply between ~50–200 m; salinity shows halocline if present).
-4. **Dask Scaling Test**: Verify that xarray can lazily open the generated Zarr store without
-   crashing local memory.
-   - Expected evidence: `xr.open_zarr(path)` returns a Dataset with correct dims; `dask.array` chunks
-     printed; no OOM error.
+---
+
+## PENDING (external blocker — no code work needed)
+
+### WeatherNext 2 GEE Access — Complete Step 2 of the previous calibration task
+**Blocker**: WeatherNext Data Request form submitted at developers.google.com/weathernext/guides/earth-engine.
+Waiting for Google to whitelist `mhw-harvester@mhw-risk-profiler.iam.gserviceaccount.com`.
+
+**When approved**, run:
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json
+conda run -n mhw-risk python scripts/smoke_test_gee.py
+```
+Expected: Stage 1 and Stage 3 pass immediately; Stage 2 (WeatherNext → GCS Zarr) passes once whitelisted.
+Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*.zarr`; Dataset repr printed.
 
 ---
 
@@ -37,20 +34,49 @@ Sub-steps:
 - [2026-03-24] GCS bucket created (see mondal-mhw-gcp-info.md for name/region/config)
 - [2026-03-24] ADC configured via GOOGLE_APPLICATION_CREDENTIALS
 - [2026-03-24] Smoke test passed: Auth OK, bucket accessible, contents empty
-- [2026-03-27] Docker Engine 29.3.1 installed and verified (hello-world OK, compose v5.1.1 OK, mhw-risk-profiler image built OK)
+- [2026-03-27] Docker Engine 29.3.1 installed and verified
+- [2026-03-27] mhw-risk conda env created; requirements.txt updated (gcsfs, google-cloud-storage)
+- [2026-03-27] harvester.py: 5 bugs fixed (WN2 asset path, email=None, GeoTIFF→Zarr, HYCOM lon/time, CLI arg)
+- [2026-03-27] HYCOM OPeNDAP verified: ts3z + uv3z fetched, interpolated to TARGET_DEPTHS_M, thermocline confirmed
+- [2026-03-27] Step 3 DONE: T/S profile from data/processed/ — 19.8°C→7.9°C thermocline (0→75m), NaN below seafloor
+- [2026-03-27] Step 4 DONE: Dask lazy-open confirmed (time=24, depth=11, lat=26, lon=13), 744 KB on disk, no OOM
+- [2026-03-27] 1D-CNN + Transformer architecture implemented: cnn1d.py, transformer.py, ensemble_wrapper.py
+  - CNN1dEncoder: 3 Conv1d layers (4→32→64→128), residual skip, AdaptiveAvgPool1d — vertical translational invariance
+  - TransformerEncoder: 4-layer pre-norm, 8 heads, d_model=128, sinusoidal pos-enc, time=90, features=5
+  - LeakyGate: α=0.1, gate ∈ [0.1,0.9], both streams always contribute, gate value exposed for regime monitoring
+  - MHWRiskModel: output (sdd, latent, gate) — Softplus head, Captum IG hook on latent
+  - Design spec: docs/superpowers/specs/2026-03-27-cnn-transformer-mhw-design.md
+- [2026-03-27] Smoke test passed (python -m src.models.ensemble_wrapper): 567,330 params
+  - Test 1: shapes (2,4), (2,4,128), (2,4); SDD range [0.597, 0.624]; gate range [0.494, 0.511]
+  - Test 2: member 0 SDD 0.6620 > others mean 0.5971 (delta 0.065); no cross-member leakage
+  - Test 3: Captum IG shapes match inputs; HYCOM attr L2=0.0045, WN2 attr L2=0.0003
 
 ---
 
 ## QUEUED
 
-### Implement the 1D-CNN + Transformer architecture in src/models/
-**Goal**: Neural architecture for encoding depth-resolved HYCOM vertical profiles and
-long-range WeatherNext 2 SST sequences into MHW severity predictions.
+### [LOW PRIORITY] MTSFT: FFT-enriched Transformer for Periodic SST Features
+**Goal**: Upgrade `TransformerEncoder` to Multi-Temporal Scale Fusion Transformer (MTSFT)
+architecture per `NotebookLM-MHWRiskprofiler-deepdive.txt`. Enrich Transformer input with
+FFT-derived spectral features (periodic components of SST signal) concatenated to the 5
+raw WN2 variables before the attention stack.
+
+**Prerequisite**: Baseline MHWRiskModel verified and Captum IG interpretability validated
+on the standard architecture first.
+
+**Caution**: Must re-verify Captum IG attribution remains interpretable over mixed
+raw+spectral feature space after FFT enrichment.
+
+---
+
+### Implement MHW Detection & SVaR Analytics in src/analytics/
+**Goal**: Compute Stress Degree Days (SDD) from harmonized output and estimate
+Stochastic Value-at-Risk (SVaR) from the 64-member ensemble distribution.
 
 Sub-steps:
-1. `cnn1d.py` — 1D-CNN feature extractor for depth-resolved T/S profiles.
-2. `transformer.py` — Transformer encoder for temporal SST dependencies.
-3. `ensemble_wrapper.py` — wraps both to process all 64 ensemble members independently.
-4. Smoke test confirming output tensor shapes; verification via printed output.
+1. `mhw_detection.py` — detect MHW events using Hobday et al. (2016) Category I threshold.
+2. `sdd.py` — accumulate Stress Degree Days above the MHW threshold.
+3. `svar.py` — estimate SVaR from the empirical quantiles of the 64-member SDD distribution.
+4. Smoke test with synthetic data; verification via printed output.
 
 ---

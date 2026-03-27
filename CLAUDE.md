@@ -111,3 +111,8 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-03-24] EE registration at earthengine.google.com/register is separate from GCP IAM
 [2026-03-24] chmod 600 JSON key immediately; store under ~/.config/gcp-keys/, never in project dir
 [2026-03-24] Use us-central1 + Standard class + Hierarchical namespace for Zarr GCS buckets
+[2026-03-27] WeatherNext 2 correct GEE asset: weathernext_2_0_0 (not 59572747_3_0); requires Data Request form
+[2026-03-27] HYCOM expt_93.0/ts3z covers 2018-01-01 to 2020-02-19 (3-hourly); ts3z + uv3z are separate URLs
+[2026-03-27] HYCOM longitude is 0-360; decode_times=False required; filter time by raw float index before isel
+[2026-03-27] zarr v3 installed (satisfies >=2.17); use gs:// URI in to_zarr/open_zarr, not gcsfs.GCSMap
+[2026-03-27] google-cloud-storage and gcsfs missing from requirements.txt — add both

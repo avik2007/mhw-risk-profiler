@@ -51,13 +51,23 @@ logger = logging.getLogger(__name__)
 TARGET_LON = np.arange(-180.0, 180.0, 0.25)
 TARGET_LAT = np.arange(-90.0, 90.25, 0.25)
 
-# WeatherNext 2 GEE asset path (Google public data)
-WN2_GEE_ASSET = "projects/gcp-public-data-weathernext/assets/59572747_3_0"
+# WeatherNext 2 GEE asset path.
+# Source: developers.google.com/weathernext/guides/earth-engine
+# Access requires submitting the WeatherNext Data Request form before the service
+# account is whitelisted. Historical data (>48 h old) is CC BY 4.0.
+WN2_GEE_ASSET = "projects/gcp-public-data-weathernext/assets/weathernext_2_0_0"
 
-# HYCOM THREDDS base URL for GLBv0.08 reanalysis (1/12-degree, daily)
-HYCOM_THREDDS_BASE = (
+# HYCOM THREDDS URLs for GLBv0.08 expt_93.0 (3-hourly, 2018-01-01 to 2020-02-19).
+# Temperature and salinity are in a separate dataset from currents (OPeNDAP convention).
+# Longitude coordinate is 0–360; bboxes in -180–180 must be converted before slicing.
+HYCOM_THREDDS_TS = (
     "https://tds.hycom.org/thredds/dodsC/GLBv0.08/expt_93.0/ts3z"
 )
+HYCOM_THREDDS_UV = (
+    "https://tds.hycom.org/thredds/dodsC/GLBv0.08/expt_93.0/uv3z"
+)
+# Back-compat alias used by __init__ default argument
+HYCOM_THREDDS_BASE = HYCOM_THREDDS_TS
 
 # Variables to extract from each source
 WN2_VARIABLES = [
@@ -139,8 +149,11 @@ class WeatherNext2Harvester:
 
         if not self._ee_initialized:
             if self._key:
+                import json
+                with open(self._key) as fh:
+                    _key_data = json.load(fh)
                 credentials = ee.ServiceAccountCredentials(
-                    email=None, key_file=self._key
+                    email=_key_data["client_email"], key_file=self._key
                 )
                 ee.Initialize(credentials=credentials)
                 gcs_creds = service_account.Credentials.from_service_account_file(
@@ -164,7 +177,7 @@ class WeatherNext2Harvester:
     ) -> xr.Dataset:
         """
         Query WeatherNext 2 for a date range and spatial bounding box, returning
-        all ensemble members as a single xr.Dataset with a 'member' dimension.
+        n_members ensemble members as a single xr.Dataset with a 'member' dimension.
 
         Parameters
         ----------
@@ -177,7 +190,9 @@ class WeatherNext2Harvester:
             Defines the spatial region of interest — typically an aquaculture lease
             plus a 2-degree buffer to capture upstream forcing.
         n_members : int
-            Number of ensemble members to retrieve (max 64 for WeatherNext 2).
+            Number of ensemble members to retrieve (1–64, max 64 for WeatherNext 2).
+            In the GEE ImageCollection each image stores all 64 members as separate
+            band groups. This parameter slices the first n_members from those groups.
             Reducing this speeds up development; use all 64 for production SVaR.
 
         Returns
@@ -204,70 +219,175 @@ class WeatherNext2Harvester:
             start_date, end_date, bbox, n_members,
         )
 
+        # Filter to complete-ensemble images only (number_of_members == 64).
+        # The collection always stores all 64 members per image; we select a subset
+        # of member bands after filtering, NOT filter by member count.
         collection = (
             ee.ImageCollection(WN2_GEE_ASSET)
             .filter(date_filter)
-            .filter(ee.Filter.eq("number_of_members", n_members))
-            .select(WN2_VARIABLES)
+            .filter(ee.Filter.eq("number_of_members", 64))
         )
 
-        # Export to GCS as Zarr and open lazily with Dask
-        zarr_uri = self._export_to_gcs(collection, region, start_date, end_date)
+        zarr_uri = self._fetch_and_write_zarr(
+            collection, region, start_date, end_date, n_members
+        )
         ds = xr.open_zarr(zarr_uri, chunks="auto", consolidated=True)
 
         logger.info("WeatherNext 2 dataset loaded: %s", ds)
         return ds
 
-    def _export_to_gcs(
+    def _fetch_and_write_zarr(
         self,
         collection,
         region,
         start_date: str,
         end_date: str,
+        n_members: int,
     ) -> str:
         """
-        Export a GEE ImageCollection to GCS as a consolidated Zarr store.
+        Compute WeatherNext 2 pixel values for a spatial region, build an xr.Dataset,
+        and write it to GCS as a consolidated Zarr store.
+
+        Uses the GEE synchronous compute path (`sampleRectangle`) rather than
+        asynchronous batch Export. This is appropriate for small regions (≤ 5°×5°)
+        and avoids the 2–20 minute GEE task queue. For large-area production runs
+        the batch export path with GeoTIFF conversion is required.
 
         Parameters
         ----------
         collection : ee.ImageCollection
-            The filtered WeatherNext 2 collection to export.
+            WeatherNext 2 collection filtered to the target date range.
+            Each image in the collection represents one forecast timestep and
+            contains all 64 ensemble members as separate band groups.
         region : ee.Geometry
-            Spatial extent for the export clip.
+            Spatial extent for pixel extraction (must be small for compute path).
         start_date, end_date : str
-            Used to construct a unique, deterministic GCS object key,
-            enabling cache hits on repeated queries for the same date range.
+            ISO 8601 dates used to construct a deterministic GCS cache key.
+        n_members : int
+            Number of ensemble members to extract from the full 64-member set.
 
         Returns
         -------
         gcs_uri : str
-            GCS URI of the exported Zarr store: "gs://<bucket>/<prefix>/<key>.zarr"
-            Suitable for direct use with xr.open_zarr().
+            GCS URI of the written Zarr store: "gs://<bucket>/<prefix>/<key>.zarr"
         """
         import ee
+        import json
 
-        store_key = f"{self._gcs_prefix}/wn2_{start_date}_{end_date}.zarr"
+        store_key = f"{self._gcs_prefix}/wn2_{start_date}_{end_date}_m{n_members}.zarr"
         gcs_uri = f"gs://{self._gcs_bucket}/{store_key}"
 
-        # Check for cached export to avoid redundant GEE Tasks
+        # Cache check: if the store already exists skip re-fetching
         bucket = self._gcs_client.bucket(self._gcs_bucket)
         if any(bucket.list_blobs(prefix=store_key)):
             logger.info("Cache hit for WeatherNext 2 Zarr: %s", gcs_uri)
             return gcs_uri
 
-        logger.info("Submitting GEE export task to GCS: %s", gcs_uri)
-        task = ee.batch.Export.image.toCloudStorage(
-            image=collection.toBands(),
-            description=f"wn2_export_{start_date}_{end_date}",
-            bucket=self._gcs_bucket,
-            fileNamePrefix=store_key,
-            region=region,
-            scale=27750,  # ~0.25-degree at equator in meters
-            fileFormat="GeoTIFF",  # GEE does not export Zarr natively; converted post-export
-            maxPixels=int(1e10),
+        logger.info("Fetching WeatherNext 2 via compute path (sampleRectangle).")
+
+        # Inspect the first image to discover band naming convention.
+        # WeatherNext 2 encodes each variable × member combination as a separate
+        # band, typically named "{variable}_member_{i}" or "{variable}_{i:02d}".
+        first_image = ee.Image(collection.first())
+        band_names = first_image.bandNames().getInfo()
+        logger.info("WeatherNext 2 band names (first image): %s", band_names)
+
+        # Build a mapping: for each WN2_VARIABLE, find the bands for members 0…n_members-1.
+        # Accepts two common naming patterns used by GEE public weather datasets:
+        #   Pattern A: "{variable}_member_{i}"  (e.g. "sea_surface_temperature_member_0")
+        #   Pattern B: "{variable}_{i:02d}"     (e.g. "sea_surface_temperature_00")
+        member_bands: dict[str, list[str]] = {}
+        for var in WN2_VARIABLES:
+            matched: list[str] = []
+            for m in range(n_members):
+                for band in [
+                    f"{var}_member_{m}",
+                    f"{var}_{m:02d}",
+                    f"{var}_{m}",
+                ]:
+                    if band in band_names:
+                        matched.append(band)
+                        break
+                else:
+                    # Fall back: treat the variable name itself as a single-member band
+                    if var in band_names and m == 0:
+                        matched.append(var)
+            if matched:
+                member_bands[var] = matched
+
+        if not member_bands:
+            raise RuntimeError(
+                f"Could not match WN2_VARIABLES to bands in the collection. "
+                f"Available bands: {band_names}"
+            )
+
+        # Iterate over each image (one timestep) and extract pixel values
+        n_images = collection.size().getInfo()
+        image_list = collection.toList(n_images)
+
+        # Collect arrays per variable: list of (n_lat, n_lon) arrays per (member, time)
+        time_coords: list = []
+        data_by_var: dict[str, list] = {var: [] for var in member_bands}
+
+        for t_idx in range(n_images):
+            img = ee.Image(image_list.get(t_idx))
+            # Extract all required bands in one call
+            all_bands = [b for bands in member_bands.values() for b in bands]
+            sample = img.select(all_bands).sampleRectangle(
+                region=region, defaultValue=0
+            ).getInfo()
+
+            props = sample["properties"]
+            for var, bands in member_bands.items():
+                # Each band's pixel grid is a list-of-lists (lat × lon)
+                member_arrays = [np.array(props[b]) for b in bands]
+                data_by_var[var].append(member_arrays)  # (n_members, lat, lon)
+
+            # Capture the image date
+            date_str = img.date().format("YYYY-MM-dd").getInfo()
+            time_coords.append(np.datetime64(date_str))
+
+        # Assemble into an xr.Dataset: dims = (member, time, latitude, longitude)
+        # Use the pixel grid from the first variable/member to infer spatial coords.
+        first_var = next(iter(data_by_var))
+        first_grid = np.array(data_by_var[first_var][0][0])  # (lat, lon)
+        n_lat, n_lon = first_grid.shape
+        lon_min_v, lat_min_v, lon_max_v, lat_max_v = (
+            region.bounds().getInfo()["coordinates"][0][0][0],
+            region.bounds().getInfo()["coordinates"][0][0][1],
+            region.bounds().getInfo()["coordinates"][0][2][0],
+            region.bounds().getInfo()["coordinates"][0][2][1],
         )
-        task.start()
-        _wait_for_ee_task(task)
+        lat_coords = np.linspace(lat_min_v, lat_max_v, n_lat)
+        lon_coords = np.linspace(lon_min_v, lon_max_v, n_lon)
+
+        data_vars = {}
+        for var, time_list in data_by_var.items():
+            # time_list: list of length n_images, each element: list of n_members arrays (lat, lon)
+            arr = np.array(time_list)  # (time, member, lat, lon)
+            arr = np.transpose(arr, (1, 0, 2, 3))  # (member, time, lat, lon)
+            data_vars[var] = (["member", "time", "latitude", "longitude"], arr)
+
+        ds = xr.Dataset(
+            data_vars,
+            coords={
+                "member": np.arange(n_members),
+                "time": time_coords,
+                "latitude": lat_coords,
+                "longitude": lon_coords,
+            },
+        )
+
+        # Write to GCS via the direct gs:// URI.
+        # gcsfs (registered as an fsspec backend) resolves credentials from
+        # GOOGLE_APPLICATION_CREDENTIALS automatically, so no manual token
+        # construction is needed. This is compatible with zarr v2 and v3.
+        logger.info("Writing WeatherNext 2 Dataset to GCS Zarr: %s", gcs_uri)
+        if self._key:
+            os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", self._key)
+        ds.to_zarr(gcs_uri, mode="w", consolidated=True)
+        logger.info("WeatherNext 2 Zarr written: %s", gcs_uri)
+
         return gcs_uri
 
 
@@ -292,16 +412,23 @@ class HYCOMLoader:
     the 1D-CNN architecture.
     """
 
-    def __init__(self, thredds_url: str = HYCOM_THREDDS_BASE) -> None:
+    def __init__(
+        self,
+        thredds_url: str = HYCOM_THREDDS_TS,
+        thredds_uv_url: str = HYCOM_THREDDS_UV,
+    ) -> None:
         """
         Parameters
         ----------
         thredds_url : str
-            OPeNDAP URL for the HYCOM THREDDS server.
-            Default points to HYCOM GLBv0.08 expt_93.0 (Jan 1994 – Dec 2015).
-            For real-time use, substitute the relevant nowcast/forecast experiment URL.
+            OPeNDAP URL for the HYCOM ts3z dataset (temperature + salinity).
+            Default: HYCOM GLBv0.08 expt_93.0 ts3z (2018-01-01 to 2020-02-19, 3-hourly).
+        thredds_uv_url : str
+            OPeNDAP URL for the HYCOM uv3z dataset (horizontal currents).
+            Must be the same experiment and time range as thredds_url.
         """
         self._url = thredds_url
+        self._url_uv = thredds_uv_url
 
     def fetch_tile(
         self,
@@ -310,24 +437,27 @@ class HYCOMLoader:
         bbox: tuple[float, float, float, float],
     ) -> xr.Dataset:
         """
-        Download a spatiotemporal tile of HYCOM 3D temperature and salinity,
-        then interpolate from native hybrid levels to TARGET_DEPTHS_M.
+        Download a spatiotemporal tile of HYCOM 3D temperature, salinity, and
+        horizontal currents, then interpolate from native hybrid levels to TARGET_DEPTHS_M.
 
         Parameters
         ----------
         start_date : str
-            ISO 8601 start date, e.g. "2023-06-01".
+            ISO 8601 start date, e.g. "2019-06-01".
         end_date : str
-            ISO 8601 end date, inclusive, e.g. "2023-08-31".
+            ISO 8601 end date, inclusive, e.g. "2019-08-31".
         bbox : tuple of float
             (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84.
+            Longitude may be in -180..180 convention; this method converts internally
+            to the 0..360 convention used by HYCOM.
 
         Returns
         -------
         ds_std : xr.Dataset
-            Dimensions: (time, depth, latitude, longitude)
+            Dimensions: (time, depth, lat, lon)
             Variables: water_temp [deg C], salinity [psu], water_u [m/s], water_v [m/s]
             Depth coordinate: TARGET_DEPTHS_M [m], positive downward.
+            Longitude coordinate: -180..180 (converted back from HYCOM 0..360).
 
             Physical note: The mixed layer depth (MLD) is implicitly encoded here —
             near-isothermal profiles indicate deep mixing (MHW-suppressing), while
@@ -336,17 +466,75 @@ class HYCOMLoader:
         """
         lon_min, lat_min, lon_max, lat_max = bbox
 
-        logger.info("Fetching HYCOM tile: %s to %s, bbox=%s", start_date, end_date, bbox)
+        # HYCOM stores longitude in 0..360 convention. Convert the bbox.
+        # This simple modulo conversion is valid for regions that do not straddle
+        # the prime meridian (lon_min and lon_max on the same side of 0°).
+        lon_min_360 = lon_min % 360
+        lon_max_360 = lon_max % 360
 
-        ds_raw = xr.open_dataset(
-            self._url,
-            engine="netcdf4",
-            chunks={"time": 10, "depth": -1, "lat": 100, "lon": 100},
-        ).sel(
-            time=slice(start_date, end_date),
-            lat=slice(lat_min, lat_max),
-            lon=slice(lon_min, lon_max),
-        )[HYCOM_VARIABLES]
+        logger.info("Fetching HYCOM ts3z tile: %s to %s, bbox=%s", start_date, end_date, bbox)
+
+        def _open_and_slice(url: str, variables: list[str]) -> xr.Dataset:
+            """
+            Open a HYCOM OPeNDAP dataset, decode the non-standard time axis, and
+            slice to the requested spatiotemporal bounding box.
+
+            HYCOM uses 'hours since 2000-01-01 00:00:00' as its time unit, which
+            xarray cannot decode with CF conventions ('hours since analysis' is
+            what xarray sees). We open with decode_times=False and decode manually.
+
+            Strategy: filter time by raw float values BEFORE decoding so that the
+            full 6000+ step time axis is never sorted or loaded into memory.
+            """
+            ds = xr.open_dataset(
+                url,
+                engine="netcdf4",
+                decode_times=False,
+                chunks={"time": 10, "depth": -1, "lat": 100, "lon": 100},
+            )
+
+            # Compute the time window bounds in the raw float unit
+            # (hours since 2000-01-01 00:00:00, matching HYCOM's actual reference epoch).
+            ref = np.datetime64("2000-01-01T00:00:00", "ns")
+            start_h = float(
+                (np.datetime64(start_date, "ns") - ref) / np.timedelta64(1, "h")
+            )
+            end_h = float(
+                (np.datetime64(end_date, "ns") + np.timedelta64(1, "D") - ref)
+                / np.timedelta64(1, "h")
+            )
+
+            t_raw = ds["time"].values                        # 1D float array, cheap OPeNDAP read
+            t_indices = np.where((t_raw >= start_h) & (t_raw < end_h))[0]
+
+            if len(t_indices) == 0:
+                raise ValueError(
+                    f"No HYCOM timesteps found between {start_date} and {end_date}. "
+                    f"Dataset covers {t_raw[0]:.0f}–{t_raw[-1]:.0f} hours since 2000-01-01. "
+                    f"Requested: {start_h:.0f}–{end_h:.0f}."
+                )
+
+            # Spatial + time slice — isel(time=...) avoids any index sort requirement
+            ds_sliced = ds.isel(time=t_indices).sel(
+                lat=slice(lat_min, lat_max),
+                lon=slice(lon_min_360, lon_max_360),
+            )[variables]
+
+            # Decode the selected time steps and replace the raw float coordinate
+            decoded = ref + (t_raw[t_indices] * 3.6e12).astype("timedelta64[ns]")
+            ds_sliced = ds_sliced.assign_coords(time=decoded)
+
+            return ds_sliced
+
+        ds_ts = _open_and_slice(self._url, ["water_temp", "salinity"])
+        ds_uv = _open_and_slice(self._url_uv, ["water_u", "water_v"])
+
+        ds_raw = xr.merge([ds_ts, ds_uv])
+
+        # Convert longitude back to -180..180 for downstream harmonization
+        ds_raw = ds_raw.assign_coords(
+            lon=xr.where(ds_raw["lon"] > 180, ds_raw["lon"] - 360, ds_raw["lon"])
+        )
 
         ds_std = self._interpolate_to_standard_depths(ds_raw)
         logger.info("HYCOM tile loaded and interpolated: %s", ds_std)
@@ -652,7 +840,7 @@ if __name__ == "__main__":
     parser.add_argument("--gcs-bucket", required=True, help="GCS bucket for WeatherNext 2 cache")
     parser.add_argument("--output-dir", default="data/processed")
     parser.add_argument("--key", default=None, help="Path to GCP service account JSON")
-    parser.add_argument("--members", type=int, default=64)
+    parser.add_argument("--n_members", type=int, default=64, dest="n_members")
     args = parser.parse_args()
 
     out = run_ingestion_pipeline(
@@ -662,6 +850,6 @@ if __name__ == "__main__":
         gcs_bucket=args.gcs_bucket,
         output_dir=args.output_dir,
         service_account_key=args.key,
-        n_members=args.members,
+        n_members=args.n_members,
     )
     print(f"Pipeline complete. Output: {out}")
