@@ -4,9 +4,13 @@
 
 ---
 
-## [2026-03-27] Docker Engine Install — Task 1 Complete
+## [2026-03-27] Docker Engine Installed and Verified
 
-- Removed conflicting Ubuntu-repo Docker packages (docker.io, containerd, runc, etc.) — none were present; system was clean.
+1. Removed conflicting Ubuntu-repo Docker packages — none were present; system was clean.
+2. Added Docker's official apt repo (Noble / amd64) to `/etc/apt/sources.list.d/docker.list`.
+3. Installed: docker-ce 29.3.1, docker-ce-cli, containerd.io, docker-buildx-plugin, docker-compose-plugin v5.1.1.
+4. Added avik2007 to docker group; enabled and started daemon via systemd (active/running).
+5. Verification gate passed: hello-world OK, compose v5.1.1 OK, mhw-risk-profiler:latest image built OK (all 6 layers).
 
 ---
 

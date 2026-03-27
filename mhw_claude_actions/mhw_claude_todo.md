@@ -37,6 +37,7 @@ Sub-steps:
 - [2026-03-24] GCS bucket created (see mondal-mhw-gcp-info.md for name/region/config)
 - [2026-03-24] ADC configured via GOOGLE_APPLICATION_CREDENTIALS
 - [2026-03-24] Smoke test passed: Auth OK, bucket accessible, contents empty
+- [2026-03-27] Docker Engine 29.3.1 installed and verified (hello-world OK, compose v5.1.1 OK, mhw-risk-profiler image built OK)
 
 ---
 
