@@ -57,7 +57,9 @@ def compute_climatology(
         Index dayofyear runs 1–365; day 366 (leap) is omitted by groupby convention.
     """
     grouped = sst_historical.groupby("time.dayofyear")
-    threshold = grouped.reduce(np.percentile, dim="time", q=percentile)
+    threshold = grouped.quantile(percentile / 100.0, dim="time")
+    # groupby().quantile() adds a 'quantile' coordinate — drop it
+    threshold = threshold.drop_vars("quantile")
     return threshold  # dims: (dayofyear, lat, lon)
 
 
@@ -103,7 +105,7 @@ def compute_mhw_mask(
 
     # Apply consecutive-day filter along time axis per member per grid point
     above_np = above.values.astype(np.int8)             # (member, time, lat, lon)
-    mask_np  = _apply_min_duration(above_np, min_duration, time_axis=1)
+    mask_np  = _apply_min_duration(above_np, min_duration)
 
     return xr.DataArray(
         mask_np.astype(bool),
@@ -116,7 +118,6 @@ def compute_mhw_mask(
 def _apply_min_duration(
     above: np.ndarray,
     min_duration: int,
-    time_axis: int = 1,
 ) -> np.ndarray:
     """
     Zero out runs shorter than min_duration along the time axis.
@@ -124,6 +125,7 @@ def _apply_min_duration(
     Uses a forward cumsum pass to compute run lengths ending at each time step,
     then a backward pass to propagate the valid-run flag back to the run start.
     Both passes are fully vectorized over (member, lat, lon) simultaneously.
+    Time axis is always axis=1: shape (member, time, lat, lon).
 
     Parameters
     ----------
@@ -132,8 +134,6 @@ def _apply_min_duration(
         Expected shape: (member, time, lat, lon).
     min_duration : int
         Minimum run length to retain. Runs shorter than this are zeroed out.
-    time_axis : int
-        Axis index corresponding to time. Default 1.
 
     Returns
     -------
@@ -152,7 +152,7 @@ def _apply_min_duration(
         return above
 
     above_int = above.astype(np.int32)
-    n_time    = above_int.shape[time_axis]
+    n_time    = above_int.shape[1]
 
     # -- Forward pass: compute run length ending at each time step --
     # run_len[t] = consecutive 1s ending at t (resets to 0 on a 0)

@@ -48,6 +48,14 @@ class TestComputeMhwMask:
         mask = compute_mhw_mask(sst_above, threshold_20)
         assert mask.shape == sst_above.shape
 
+    def test_min_duration_one_flags_every_above_day(self, sst_mixed, threshold_20_small):
+        """min_duration=1 → every day above threshold is flagged, no run filter applied."""
+        mask = compute_mhw_mask(sst_mixed, threshold_20_small, min_duration=1)
+        values = mask.values[0, :, 0, 0]
+        # sst_mixed: first 4 days below (19°C), last 6 days above (21°C)
+        assert not values[:4].any(), "Below-threshold days must still be False"
+        assert values[4:].all(), "Above-threshold days must be True with min_duration=1"
+
     def test_member_independence(self, time_coord, threshold_20_small):
         """Each member's mask is computed independently — member 0 above, member 1 below."""
         data = np.ones((2, 10, 1, 1), dtype=np.float32) * 19.0
