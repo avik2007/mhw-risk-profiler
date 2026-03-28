@@ -50,6 +50,15 @@ Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*
   - Test 1: shapes (2,4), (2,4,128), (2,4); SDD range [0.597, 0.624]; gate range [0.494, 0.511]
   - Test 2: member 0 SDD 0.6620 > others mean 0.5971 (delta 0.065); no cross-member leakage
   - Test 3: Captum IG shapes match inputs; HYCOM attr L2=0.0045, WN2 attr L2=0.0003
+- [2026-03-27] MHW Detection & SVaR Analytics implemented and tested (src/analytics/)
+  - mhw_detection.py: compute_climatology(), compute_mhw_mask() — Hobday 2016 Category I
+    - Consecutive-day filter: forward run-length + backward propagation pass
+    - Modernised to grouped.quantile() for xarray 2024.x compatibility
+  - sdd.py: accumulate_sdd() — thermal load above threshold, MHW-mask gated, xarray-native
+  - svar.py: compute_svar(), compute_ensemble_stats() — ensemble quantile VaR, population std
+  - Full test suite: 26 tests (test_mhw_detection.py × 9, test_sdd.py × 6, test_svar.py × 11)
+  - Integration smoke test PASSED: HYCOM proxy, 18°C threshold, 338 locations, SVaR_95 mean 40.5 degC.day
+  - End-to-end with real WeatherNext 2 blocked until Google whitelist (see PENDING)
 
 ---
 
@@ -67,16 +76,3 @@ on the standard architecture first.
 **Caution**: Must re-verify Captum IG attribution remains interpretable over mixed
 raw+spectral feature space after FFT enrichment.
 
----
-
-### Implement MHW Detection & SVaR Analytics in src/analytics/
-**Goal**: Compute Stress Degree Days (SDD) from harmonized output and estimate
-Stochastic Value-at-Risk (SVaR) from the 64-member ensemble distribution.
-
-Sub-steps:
-1. `mhw_detection.py` — detect MHW events using Hobday et al. (2016) Category I threshold.
-2. `sdd.py` — accumulate Stress Degree Days above the MHW threshold.
-3. `svar.py` — estimate SVaR from the empirical quantiles of the 64-member SDD distribution.
-4. Smoke test with synthetic data; verification via printed output.
-
----
