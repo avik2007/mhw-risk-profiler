@@ -23,7 +23,6 @@ Dependencies: xarray>=2024.2.0, numpy>=1.26.0
 """
 from __future__ import annotations
 
-import numpy as np
 import xarray as xr
 
 
