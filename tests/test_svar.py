@@ -18,8 +18,11 @@ class TestComputeSvar:
         SVaR_95 of 8 members: top 5% → member 7 (10.0) dominates.
         """
         svar = compute_svar(sdd_tensor, quantile=0.95)
-        assert svar[0].item() > 5.0, \
-            f"SVaR_95 must reflect extreme member; got {svar[0].item():.3f}"
+        # torch.quantile([1.0, 1.5, 2.0, 1.2, 1.8, 1.3, 1.6, 10.0], 0.95)
+        # linear interp at index 0.95*(8-1)=6.65 between sorted[6]=2.0 and sorted[7]=10.0:
+        # 2.0 + 0.65*8.0 = 7.20
+        assert abs(svar[0].item() - 7.20) < 0.01, \
+            f"SVaR_95 expected ~7.20 for this fixture; got {svar[0].item():.3f}"
 
     def test_svar_50_is_median(self):
         """SVaR at quantile=0.50 is the ensemble median."""
@@ -75,3 +78,10 @@ class TestComputeEnsembleStats:
         sdd = torch.tensor([[2.0, 4.0, 6.0, 8.0]])  # mean = 5.0
         stats = compute_ensemble_stats(sdd)
         torch.testing.assert_close(stats["mean"], torch.tensor([5.0]))
+
+    def test_std_uses_population_correction(self):
+        """std uses N (population) not N-1 (sample) denominator."""
+        # [1, 3] — population std = 1.0, sample std = sqrt(2) ≈ 1.414
+        sdd = torch.tensor([[1.0, 3.0]])
+        stats = compute_ensemble_stats(sdd)
+        torch.testing.assert_close(stats["std"], torch.tensor([1.0]))

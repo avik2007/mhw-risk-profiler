@@ -81,7 +81,7 @@ def compute_ensemble_stats(
     stats : dict[str, torch.Tensor]
         Keys and shapes (all shape (batch,)):
           "mean"    — ensemble mean SDD [°C·day]
-          "std"     — ensemble standard deviation (uncertainty spread)
+          "std"     — ensemble standard deviation [°C·day] (population std, correction=0)
           "svar_50" — median SVaR (expected scenario)
           "svar_90" — 90th-percentile SVaR (moderate tail)
           "svar_95" — 95th-percentile SVaR (standard insurance VaR level)
@@ -92,9 +92,14 @@ def compute_ensemble_stats(
           Low std  → ensemble agrees → lower uncertainty loading on the insurance price
     """
     sdd_f = sdd.float()
+    if sdd_f.ndim != 2:
+        raise ValueError(
+            f"sdd must have shape (batch, member), got {tuple(sdd_f.shape)} "
+            f"with {sdd_f.ndim} dimensions."
+        )
     return {
         "mean":    sdd_f.mean(dim=1),
-        "std":     sdd_f.std(dim=1),
+        "std":     sdd_f.std(dim=1, correction=0),   # population std (N), not sample std (N-1)
         "svar_50": torch.quantile(sdd_f, 0.50, dim=1),
         "svar_90": torch.quantile(sdd_f, 0.90, dim=1),
         "svar_95": torch.quantile(sdd_f, 0.95, dim=1),
