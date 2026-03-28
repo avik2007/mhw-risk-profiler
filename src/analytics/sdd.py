@@ -19,7 +19,7 @@ SDD is the primary trigger variable for parametric insurance payout:
 
 The 64-member ensemble produces 64 SDD realisations, from which SVaR is estimated.
 
-Dependencies: xarray>=2024.2.0, numpy>=1.26.0
+Dependencies: xarray>=2024.2.0
 """
 from __future__ import annotations
 

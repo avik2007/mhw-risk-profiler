@@ -19,8 +19,22 @@ aquaculture assets exposed to Marine Heatwave (MHW) events.
 
 ### 1. Plan Mode
 - Required for ANY task with 3 or more steps.
-- Before touching code, write a numbered plan. Get acknowledgment or self-review before executing.
-- No silent pivots: if the plan changes mid-execution, update the plan first, then continue.
+- Before touching code, write a detailed numbered plan. Present each step to the user individually
+  and wait for explicit approval of that step before presenting the next.
+- Do not begin execution until every step has been explained and approved.
+- No silent pivots: if the plan changes mid-execution, stop, explain the change, get approval, then continue.
+
+### 1a. Autonomy After Plan Approval (Accept Edits On mode)
+Once a detailed plan has been presented step-by-step and the user has approved every step,
+Claude may execute the approved plan without requesting permission for each individual action.
+
+**Hard limits — ALWAYS require explicit user permission, no exceptions:**
+- Deleting any file or directory
+- Creating a new git branch
+- Pushing to any remote (git push)
+
+**Everything else** (file edits, running tests, bash commands, installing packages, writing new files,
+committing to the current branch) may proceed automatically under an approved plan.
 
 ### 2. Self-Improvement Loop
 - Every root-cause fix or non-obvious discovery goes into `mhw_claude_actions/mhw_claude_lessons.md`.
