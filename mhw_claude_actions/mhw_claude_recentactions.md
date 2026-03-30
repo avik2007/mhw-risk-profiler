@@ -4,6 +4,36 @@
 
 ---
 
+## [2026-03-30] HYCOM EDA Notebook Created
+
+1. Created `notebooks/hycom_eda.ipynb` — 10-section exploratory notebook using existing
+   `data/processed/hycom_2019-08-01_2019-08-03.zarr` (no network required).
+2. Sections: dataset structure, surface temperature map (with 18°C contour), all 4 variables
+   side-by-side, depth profiles (what the CNN sees), Hovmöller diagram, SST time series with
+   SDD shading, current vectors, all-profiles overlay, T-S diagram, xarray patterns.
+3. Registered `mhw-risk` conda env as a Jupyter kernel (`ipykernel install --user --name mhw-risk`).
+4. Launch: `conda run -n mhw-risk jupyter notebook notebooks/hycom_eda.ipynb`
+
+---
+
+## [2026-03-30] Analytics Plan Revised — WN2 Proxy Training Dropped
+
+Plan at `docs/superpowers/plans/2026-03-30-hycom-proxy-training.md` revised after discussion.
+Decisions made:
+- WN2 proxy training (tasks 2–4) dropped — no fake WN2 data; wait for real GEE whitelist
+- MHW threshold changed from constant 18°C → location-varying per grid cell
+- Two tasks remain, deferred to next session:
+  1. `src/analytics/payout.py` — parametric payout engine (pure math)
+  2. `scripts/compute_hycom_climatology.py` — fetch 2yr HYCOM surface SST, compute
+     90th-percentile threshold per (dayofyear, lat, lon), save to
+     `data/processed/hycom_sst_threshold.zarr`
+
+---
+
+## [2026-03-30] HYCOM-Proxy Training Pipeline Plan Written (Tentative — superseded above)
+
+---
+
 ## [2026-03-27] HYCOM Zarr Verification — Steps 3 & 4 DONE
 
 1. Wrote `scripts/verify_hycom_zarr.py` — fetches HYCOM tile, writes local Zarr, verifies steps 3 & 4.

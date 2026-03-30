@@ -10,6 +10,20 @@
 
 ---
 
+## NEXT (approved plan — ready to execute when confirmed)
+
+### Pre-WeatherNext Analytics Completions
+**Plan:** `docs/superpowers/plans/2026-03-30-hycom-proxy-training.md`
+**Status:** Confirmed — deferred to next session.
+
+Two tasks, no WN2 needed, no proxy training:
+1. `src/analytics/payout.py` — parametric insurance payout engine (pure math, no data)
+2. `scripts/compute_hycom_climatology.py` — fetch 2 years of HYCOM surface SST (depth=0),
+   run `compute_climatology()` → location-varying 90th-percentile threshold per (dayofyear, lat, lon),
+   save to `data/processed/hycom_sst_threshold.zarr` (network required, surface-only = fast)
+
+---
+
 ## PENDING (external blocker — no code work needed)
 
 ### WeatherNext 2 GEE Access — Complete Step 2 of the previous calibration task
@@ -50,6 +64,7 @@ Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*
   - Test 1: shapes (2,4), (2,4,128), (2,4); SDD range [0.597, 0.624]; gate range [0.494, 0.511]
   - Test 2: member 0 SDD 0.6620 > others mean 0.5971 (delta 0.065); no cross-member leakage
   - Test 3: Captum IG shapes match inputs; HYCOM attr L2=0.0045, WN2 attr L2=0.0003
+- [2026-03-30] HYCOM EDA notebook created (`notebooks/hycom_eda.ipynb`, 10 sections, offline)
 - [2026-03-27] MHW Detection & SVaR Analytics implemented and tested (src/analytics/)
   - mhw_detection.py: compute_climatology(), compute_mhw_mask() — Hobday 2016 Category I
     - Consecutive-day filter: forward run-length + backward propagation pass
@@ -63,6 +78,26 @@ Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*
 ---
 
 ## QUEUED
+
+### [LONG TERM] Extended SST Climatology — HYCOM Experiments + OISST
+**Goal**: Replace the 2-year HYCOM expt_93.0 baseline with a longer historical record
+suitable for a statistically robust 90th-percentile MHW threshold (Hobday 2016 recommends
+≥30 years). Relevant to this project and at least one other.
+
+**Two avenues to investigate:**
+1. **Longer HYCOM runs** — HYCOM GLBv0.08 has multiple experiments covering earlier periods
+   (expt_91.0, expt_91.1, expt_91.2, expt_92.8, expt_92.9). Check THREDDS catalog at
+   `https://tds.hycom.org/thredds/catalog.html` for coverage dates and whether ts3z/uv3z
+   are available for each. GLBv0.08 potentially covers back to 1994.
+2. **NOAA OISST** (Optimum Interpolation SST, v2.1) — daily, 0.25-degree global,
+   1981–present. NetCDF via OPeNDAP or bulk download from NCEI. No depth structure
+   (surface only), but 40+ years is ideal for climatology. Already used as the standard
+   baseline in most published MHW literature. Access: `https://www.ncei.noaa.gov/products/optimum-interpolation-sst`
+
+**When to tackle**: Before production deployment of the MHW threshold. Not blocking
+current development work (2-year proxy threshold is sufficient for pipeline validation).
+
+---
 
 ### [LOW PRIORITY] MTSFT: FFT-enriched Transformer for Periodic SST Features
 **Goal**: Upgrade `TransformerEncoder` to Multi-Temporal Scale Fusion Transformer (MTSFT)
