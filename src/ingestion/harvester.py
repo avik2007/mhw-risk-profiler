@@ -57,14 +57,16 @@ TARGET_LAT = np.arange(-90.0, 90.25, 0.25)
 # account is whitelisted. Historical data (>48 h old) is CC BY 4.0.
 WN2_GEE_ASSET = "projects/gcp-public-data-weathernext/assets/weathernext_2_0_0"
 
-# HYCOM THREDDS URLs for GLBv0.08 expt_93.0 (3-hourly, 2018-01-01 to 2020-02-19).
+# HYCOM THREDDS URLs for GLBy0.08 expt_93.0 (3-hourly, 2018-12-04 to 2024-09-04).
+# GLBy0.08 supersedes GLBv0.08: same variables and structure, extended coverage.
+# Covers 2022-2023 WN2 training/validation periods (GLBv0.08 ended 2020-02-19).
 # Temperature and salinity are in a separate dataset from currents (OPeNDAP convention).
 # Longitude coordinate is 0–360; bboxes in -180–180 must be converted before slicing.
 HYCOM_THREDDS_TS = (
-    "https://tds.hycom.org/thredds/dodsC/GLBv0.08/expt_93.0/ts3z"
+    "https://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0/ts3z"
 )
 HYCOM_THREDDS_UV = (
-    "https://tds.hycom.org/thredds/dodsC/GLBv0.08/expt_93.0/uv3z"
+    "https://tds.hycom.org/thredds/dodsC/GLBy0.08/expt_93.0/uv3z"
 )
 # Back-compat alias used by __init__ default argument
 HYCOM_THREDDS_BASE = HYCOM_THREDDS_TS
