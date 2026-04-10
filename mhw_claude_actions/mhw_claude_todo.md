@@ -4,27 +4,56 @@
 
 ---
 
-## ACTIVE
+## ACTIVE — RESUME HERE NEXT SESSION
 
-### [HIGH PRIORITY] Implement ERA5 Proxy Training Strategy
-**Plan:** `docs/superpowers/plans/2026-04-03-era5-proxy-training.md`
-**Status:** Plan written — ready to execute.
-**Goal:** Unblock model training by using deterministic ERA5 as a proxy for WeatherNext 2, including synthetic ensemble expansion (1 → 64 members) for SVaR validation.
+### ERA5/WN2 Dual Training Plan — In Progress (Tasks 2–7 remaining)
 
-**Tasks:**
-1. Create `src/ingestion/era5_harvester.py` — `ERA5Harvester` class
-2. Add `expand_and_perturb()` to `DataHarmonizer` in `src/ingestion/harvester.py`
-3. Create `scripts/train_era5_proxy.py` — training loop with `--dry-run` flag
-4. Create `tests/test_era5_harvester.py` — 3 offline unit tests
-5. Validation gate: `pytest tests/test_era5_harvester.py -v` + `--dry-run` output
+**Skill to invoke first:** `superpowers:subagent-driven-development`
+**Plan file:** `docs/superpowers/plans/2026-04-10-era5-wn2-dual-training.md`
+**Spec file:** `docs/superpowers/specs/2026-04-10-era5-wn2-xai-comparison-design.md`
+**Current HEAD:** `b84a199`
+
+#### Status of all 8 tasks:
+| # | Task | Status |
+|---|------|--------|
+| 0 | WN2 GEE asset scoping (`scripts/scope_wn2_asset.py`) | ✅ DONE |
+| 1 | Add `matplotlib>=3.8.0` to `requirements.txt` | ✅ DONE |
+| 2 | ERA5Harvester + `expand_and_perturb` + 3 unit tests | ⬜ NOT STARTED — start here |
+| 3 | Shared `scripts/_train_utils.py` + 3 unit tests | ⬜ blocked by Task 2 |
+| 4 | `scripts/train_era5.py` dry-run gate | ⬜ blocked by Task 3 |
+| 5 | `scripts/train_wn2.py` dry-run gate | ⬜ blocked by Task 3 |
+| 6 | `scripts/compare_xai.py` dry-run gate | ⬜ blocked by Tasks 4+5 |
+| 7 | Full test suite + all 3 dry-runs in sequence | ⬜ blocked by all above |
+
+#### Critical plan amendment (approved this session):
+- **ERA5** uses `TRAIN_PERIOD = ("2018-01-01", "2018-12-31")`, `VAL_PERIOD = ("2019-01-01", "2019-12-31")`
+- **WN2** uses `TRAIN_PERIOD = ("2022-01-01", "2022-12-31")`, `VAL_PERIOD = ("2023-01-01", "2023-12-31")`
+  - WN2 only covers 2022-present (GEE forecast run structure, not daily reanalysis)
+- **HYCOM URL** already fixed: `GLBv0.08` → `GLBy0.08` in `harvester.py` (commit `7012a5f`)
+  - GLBy0.08/expt_93.0 covers 2018-12-04 to 2024-09-04 — covers both ERA5 and WN2 periods
+- **`_train_utils.py`** must export FOUR period constants (not two):
+  ```python
+  ERA5_TRAIN_PERIOD = ("2018-01-01", "2018-12-31")
+  ERA5_VAL_PERIOD   = ("2019-01-01", "2019-12-31")
+  WN2_TRAIN_PERIOD  = ("2022-01-01", "2022-12-31")
+  WN2_VAL_PERIOD    = ("2023-01-01", "2023-12-31")
+  ```
+  `train_era5.py` imports `ERA5_TRAIN_PERIOD, ERA5_VAL_PERIOD`.
+  `train_wn2.py` imports `WN2_TRAIN_PERIOD, WN2_VAL_PERIOD`.
+
+#### How to resume:
+1. Read the plan file fully (it has verbatim code for every task — paste into subagents, don't make them read the file)
+2. Use `superpowers:subagent-driven-development` — dispatch one implementer per task, then spec reviewer, then code quality reviewer
+3. Task 2 is the first to implement. Its files: `src/ingestion/era5_harvester.py`, `tests/test_era5_harvester.py`, modify `src/ingestion/harvester.py` (add `NOISE_SIGMAS` + `expand_and_perturb`), modify `src/ingestion/__init__.py`
+4. Apply the WN2 period amendment when implementing Task 3 (`_train_utils.py`)
 
 ---
 
-## NEXT (approved plan — ready to execute when confirmed)
+## NEXT (after dual training plan complete)
 
 ### Pre-WeatherNext Analytics Completions
 **Plan:** `docs/superpowers/plans/2026-03-30-hycom-proxy-training.md`
-**Status:** Confirmed — deferred to next session.
+**Status:** Confirmed — deferred.
 
 Two tasks, no WN2 needed, no proxy training:
 1. `src/analytics/payout.py` — parametric insurance payout engine (pure math, no data)
@@ -36,22 +65,22 @@ Two tasks, no WN2 needed, no proxy training:
 
 ## PENDING (external blocker — no code work needed)
 
-### WeatherNext 2 GEE Access — Complete Step 2 of the previous calibration task
-**Blocker**: WeatherNext Data Request form submitted at developers.google.com/weathernext/guides/earth-engine.
-Waiting for Google to whitelist `mhw-harvester@mhw-risk-profiler.iam.gserviceaccount.com`.
+### WeatherNext 2 GEE Access — WN2 whitelisting confirmed, but harvesting strategy needs update
+**Status:** GEE whitelist approved. However, WN2 is a forecast run structure (not daily time series).
+See `docs/superpowers/specs/wn2_asset_schema.txt` for the full schema findings.
 
-**When approved**, run:
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json
-conda run -n mhw-risk python scripts/smoke_test_gee.py
-```
-Expected: Stage 1 and Stage 3 pass immediately; Stage 2 (WeatherNext → GCS Zarr) passes once whitelisted.
-Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*.zarr`; Dataset repr printed.
+**When implementing `train_wn2.py` for real run**, `WeatherNext2Harvester.fetch_ensemble()` must filter:
+- `start_time` ending in `T00:00:00Z` (00Z init only)
+- `forecast_hour = 24` (24h-ahead forecast → one per member per day)
+- This gives 365 × 64 images/year — matching ERA5's daily structure
 
 ---
 
 ## COMPLETED
 
+- [2026-04-10] matplotlib>=3.8.0 added to requirements.txt and installed
+- [2026-04-10] HYCOM URLs updated GLBv0.08 → GLBy0.08 (covers 2022-2024)
+- [2026-04-10] WN2 asset scoped: forecast run structure, 2022-present, 64 FGN members
 - [2026-03-24] GCP project created, $300 free credits activated
 - [2026-03-24] Earth Engine API enabled; account registered as Contributor (Noncommercial)
 - [2026-03-24] Service account created with required IAM roles (see mondal-mhw-gcp-info.md)
@@ -65,25 +94,9 @@ Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*
 - [2026-03-27] Step 3 DONE: T/S profile from data/processed/ — 19.8°C→7.9°C thermocline (0→75m), NaN below seafloor
 - [2026-03-27] Step 4 DONE: Dask lazy-open confirmed (time=24, depth=11, lat=26, lon=13), 744 KB on disk, no OOM
 - [2026-03-27] 1D-CNN + Transformer architecture implemented: cnn1d.py, transformer.py, ensemble_wrapper.py
-  - CNN1dEncoder: 3 Conv1d layers (4→32→64→128), residual skip, AdaptiveAvgPool1d — vertical translational invariance
-  - TransformerEncoder: 4-layer pre-norm, 8 heads, d_model=128, sinusoidal pos-enc, time=90, features=5
-  - LeakyGate: α=0.1, gate ∈ [0.1,0.9], both streams always contribute, gate value exposed for regime monitoring
-  - MHWRiskModel: output (sdd, latent, gate) — Softplus head, Captum IG hook on latent
-  - Design spec: docs/superpowers/specs/2026-03-27-cnn-transformer-mhw-design.md
 - [2026-03-27] Smoke test passed (python -m src.models.ensemble_wrapper): 567,330 params
-  - Test 1: shapes (2,4), (2,4,128), (2,4); SDD range [0.597, 0.624]; gate range [0.494, 0.511]
-  - Test 2: member 0 SDD 0.6620 > others mean 0.5971 (delta 0.065); no cross-member leakage
-  - Test 3: Captum IG shapes match inputs; HYCOM attr L2=0.0045, WN2 attr L2=0.0003
-- [2026-03-30] HYCOM EDA notebook created (`notebooks/hycom_eda.ipynb`, 10 sections, offline)
+- [2026-03-30] HYCOM EDA notebook created (notebooks/hycom_eda.ipynb, 10 sections, offline)
 - [2026-03-27] MHW Detection & SVaR Analytics implemented and tested (src/analytics/)
-  - mhw_detection.py: compute_climatology(), compute_mhw_mask() — Hobday 2016 Category I
-    - Consecutive-day filter: forward run-length + backward propagation pass
-    - Modernised to grouped.quantile() for xarray 2024.x compatibility
-  - sdd.py: accumulate_sdd() — thermal load above threshold, MHW-mask gated, xarray-native
-  - svar.py: compute_svar(), compute_ensemble_stats() — ensemble quantile VaR, population std
-  - Full test suite: 26 tests (test_mhw_detection.py × 9, test_sdd.py × 6, test_svar.py × 11)
-  - Integration smoke test PASSED: HYCOM proxy, 18°C threshold, 338 locations, SVaR_95 mean 40.5 degC.day
-  - End-to-end with real WeatherNext 2 blocked until Google whitelist (see PENDING)
 
 ---
 
@@ -92,43 +105,21 @@ Evidence required: Zarr written to `gs://mhw-risk-cache/weathernext2/cache/wn2_*
 ### [LONG TERM] Extended SST Climatology — HYCOM Experiments + OISST
 **Goal**: Replace the 2-year HYCOM expt_93.0 baseline with a longer historical record
 suitable for a statistically robust 90th-percentile MHW threshold (Hobday 2016 recommends
-≥30 years). Relevant to this project and at least one other.
+≥30 years).
 
-**Two avenues to investigate:**
-1. **Longer HYCOM runs** — HYCOM GLBv0.08 has multiple experiments covering earlier periods
-   (expt_91.0, expt_91.1, expt_91.2, expt_92.8, expt_92.9). Check THREDDS catalog at
-   `https://tds.hycom.org/thredds/catalog.html` for coverage dates and whether ts3z/uv3z
-   are available for each. GLBv0.08 potentially covers back to 1994.
-2. **NOAA OISST** (Optimum Interpolation SST, v2.1) — daily, 0.25-degree global,
-   1981–present. NetCDF via OPeNDAP or bulk download from NCEI. No depth structure
-   (surface only), but 40+ years is ideal for climatology. Already used as the standard
-   baseline in most published MHW literature. Access: `https://www.ncei.noaa.gov/products/optimum-interpolation-sst`
+**Two avenues:**
+1. Longer HYCOM runs — GLBv0.08 has expt_91.x, 92.x going back to ~1994. Check THREDDS catalog.
+2. NOAA OISST v2.1 — daily 0.25-degree, 1981–present, standard MHW literature baseline.
 
-**When to tackle**: Before production deployment of the MHW threshold. Not blocking
-current development work (2-year proxy threshold is sufficient for pipeline validation).
+**When to tackle**: Before production deployment. Not blocking current dev work.
 
 ---
 
 ### [LOW PRIORITY] XAI Option C — Member-Level Attribution Variance (ERA5 vs WN2)
-**Goal**: For the WN2-trained model, compute IG attribution variance *across* the 64 real FGN members and compare against the ERA5-trained model (synthetic members). Test whether real FGN ensemble spread produces member-dependent feature importance — i.e., different atmospheric trajectories shift what the model attends to — vs ERA5 synthetic members where attribution variance across members should be near-uniform (only Gaussian noise separates them).
-
-**Prerequisite**: Phase 3 XAI comparison (option A, per-season) complete and `xai_comparison.json` validated.
-
-**Output**: `data/results/xai_member_variance.json` — per-variable attribution std across members, per season, for both models.
-
-**Scientific question**: Does FGN ensemble structure do real statistical work that Gaussian perturbation cannot replicate?
+**Prerequisite**: Phase 3 XAI comparison (compare_xai.py) complete.
+**Output**: `data/results/xai_member_variance.json`
 
 ---
 
 ### [LOW PRIORITY] MTSFT: FFT-enriched Transformer for Periodic SST Features
-**Goal**: Upgrade `TransformerEncoder` to Multi-Temporal Scale Fusion Transformer (MTSFT)
-architecture per `NotebookLM-MHWRiskprofiler-deepdive.txt`. Enrich Transformer input with
-FFT-derived spectral features (periodic components of SST signal) concatenated to the 5
-raw WN2 variables before the attention stack.
-
-**Prerequisite**: Baseline MHWRiskModel verified and Captum IG interpretability validated
-on the standard architecture first.
-
-**Caution**: Must re-verify Captum IG attribution remains interpretable over mixed
-raw+spectral feature space after FFT enrichment.
-
+**Prerequisite**: Baseline MHWRiskModel XAI validated on standard architecture first.

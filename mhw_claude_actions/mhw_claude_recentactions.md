@@ -4,6 +4,44 @@
 
 ---
 
+## [2026-04-10] ERA5/WN2 Dual Training Plan — Execution Started (Tasks 0 & 1 complete)
+
+Executing plan at `docs/superpowers/plans/2026-04-10-era5-wn2-dual-training.md`
+using `superpowers:subagent-driven-development` skill.
+
+### Completed this session:
+
+**Task 1 — matplotlib dependency** ✅
+- Added `matplotlib>=3.8.0` to `requirements.txt` under Scientific utilities
+- Installed in `mhw-risk` conda env; verified import (`3.10.8`)
+- Commit: `88765f1`
+
+**HYCOM URL fix** ✅
+- Switched `GLBv0.08` → `GLBy0.08` in both `HYCOM_THREDDS_TS` and `HYCOM_THREDDS_UV` constants in `src/ingestion/harvester.py`
+- GLBy0.08/expt_93.0 covers 2018-12-04 to 2024-09-04; needed for WN2 2022/2023 training periods
+- Commit: `7012a5f`
+
+**Task 0 — WN2 GEE asset scoping** ✅ (done_with_concerns addressed)
+- Created `scripts/scope_wn2_asset.py`
+- Ran against live GEE; output captured to `docs/superpowers/specs/wn2_asset_schema.txt`
+- Key finding: WN2 is a **forecast run structure** (not daily time series), covering **2022-present only**
+  - 4 init times/day (00Z, 06Z, 12Z, 18Z), 15-day horizon, 64 FGN members
+  - Recommended harvesting: filter to 00Z init + forecast_hour=24 → one 24h-ahead per member per day
+  - ERA5 TRAIN_PERIOD (2018/2019) is valid; WN2 must use 2022/2023
+- Updated `docs/superpowers/specs/2026-04-10-era5-wn2-xai-comparison-design.md` with Phase 0 Findings
+- Fixed `col.size().getInfo()` hang in scope script
+- Commits: `d0bf97d`, `b84a199`
+
+### Plan change (approved by user):
+- ERA5: TRAIN_PERIOD=2018, VAL_PERIOD=2019 (unchanged)
+- WN2: TRAIN_PERIOD=2022, VAL_PERIOD=2023 (new)
+- `_train_utils.py` must export BOTH sets: `ERA5_TRAIN_PERIOD`, `ERA5_VAL_PERIOD`, `WN2_TRAIN_PERIOD`, `WN2_VAL_PERIOD`
+- Each training script imports its own set
+
+### Current HEAD: `b84a199`
+
+---
+
 ## [2026-03-30] HYCOM EDA Notebook Created
 
 1. Created `notebooks/hycom_eda.ipynb` — 10-section exploratory notebook using existing
