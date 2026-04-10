@@ -260,3 +260,47 @@ Member-level attribution variance: for the WN2 model, compute IG attribution var
 ---
 
 *Scientific rationale: Gemini. Implementation: Claude.*
+
+---
+
+## Phase 0 Findings
+
+**Scoped:** 2026-04-10
+**Asset:** `projects/gcp-public-data-weathernext/assets/weathernext_2_0_0`
+**Full schema:** `docs/superpowers/specs/wn2_asset_schema.txt`
+
+### Time axis type: FORECAST RUN (not a daily time series)
+
+WN2 is organized as forecast runs, not a flat daily time series like ERA5. Each calendar day has 4 initialization times (00Z, 06Z, 12Z, 18Z). Each initialization produces a 15-day forecast at 6-hourly resolution (fh=6 to fh=360 in 6-hour steps, 60 lead times). The collection has 15,360 images per calendar day (4 init_times × 60 fh × 64 members).
+
+### Coverage
+
+- First init date: 2022-01-01 00:00Z
+- Last verified date: 2026-04-01 (ongoing, no gap observed)
+- **WN2 does NOT cover 2018 or 2019.** The ERA5 train/val split (2018 train / 2019 val) cannot be replicated for WN2.
+
+### Ensemble structure
+
+- 64 real FGN ensemble members per run (member IDs "0" to "63", stored as string property `ensemble_member`)
+- No synthetic expansion needed — 64 real draws match the model's expected `n_members=64`
+
+### Band naming
+
+- 86 bands per image
+- Surface bands include all 5 MHW-relevant variables: `sea_surface_temperature`, `2m_temperature`, `10m_u_component_of_wind`, `10m_v_component_of_wind`, `mean_sea_level_pressure`
+- Also includes `total_precipitation_6hr` and 78 pressure-level bands (geopotential, specific_humidity, temperature, u/v wind, vertical_velocity at 13 levels)
+- Band naming is identical to ERA5 band naming for the 5 surface variables used by the model
+
+### Image index format
+
+`system:index` = `{start_time}_{end_time}_{member}` (e.g. `202201010000_202201010600_0`)
+
+Key properties: `start_time`, `end_time`, `ensemble_member` (string), `forecast_hour` (int 6-360).
+No `initialization_time` or `forecast_reference_time` properties present.
+
+### Implications for train_wn2.py
+
+1. **Train/val split must change:** Use 2022 as train, 2023 as val (not 2018/2019). The spec table in "Train / Validation Split" applies only to ERA5. WN2 uses a parallel 2022/2023 split.
+2. **Daily aggregation required client-side:** To get one value per calendar day, pick a single init_time (e.g. 00Z) and a single lead time (e.g. fh=24 = next-day forecast), or average across the 4 x 6hr slots.
+3. **Recommended harvesting strategy:** Filter to `start_time` ending in `T00:00:00Z` (00Z init only) and `forecast_hour = 24` to obtain one deterministic-equivalent daily snapshot per member. This gives 365 images × 64 members per year — matching ERA5 structure.
+4. **No resampling of data already in GEE** — GEE performs the spatial/temporal reduction server-side; the WeatherNext2Harvester must build its filter chain accordingly.

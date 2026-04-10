@@ -1,0 +1,65 @@
+=== WeatherNext 2 Asset Schema ===
+Scoped: 2026-04-10
+Asset: projects/gcp-public-data-weathernext/assets/weathernext_2_0_0
+
+--- Time Axis Structure ---
+Structure type:        FORECAST RUN (not a daily time series like ERA5)
+Init times per day:    4 (00Z, 06Z, 12Z, 18Z)
+Forecast horizon:      15 days per run
+Forecast lead times:   fh=6 to fh=360 in 6-hour steps (60 unique lead times)
+Ensemble members:      64 per run (member IDs 0-63)
+Images per day:        15,360  (4 init_times x 60 fh x 64 members)
+Images per init time:  3,840   (64 members x 60 fh)
+Images per init/fh:    64      (one per ensemble member)
+
+--- Coverage ---
+First init date: 2022-01-01 00:00Z
+Last verified:   2026-04-01 (ongoing, no end date observed)
+
+--- Image Index Format ---
+system:index: {start_time}_{end_time}_{member}
+Example:      202201010000_202201010600_0
+              start=2022-01-01T00:00:00Z  end=2022-01-01T06:00:00Z  member=0  fh=6
+
+--- Key Properties ---
+system:time_start:    Unix ms of init window start
+start_time:           ISO8601 init window start (e.g. "2022-01-01T00:00:00Z")
+end_time:             ISO8601 init window end   (e.g. "2022-01-01T06:00:00Z")
+ensemble_member:      String "0" to "63"
+forecast_hour:        Integer, 6 to 360 in steps of 6
+(no initialization_time or forecast_reference_time properties)
+
+--- Band Count and Naming ---
+Total bands per image: 86
+Surface/near-surface bands (8):
+  100m_u_component_of_wind
+  100m_v_component_of_wind
+  10m_u_component_of_wind
+  10m_v_component_of_wind
+  2m_temperature
+  mean_sea_level_pressure
+  sea_surface_temperature
+  total_precipitation_6hr
+Pressure-level bands (78):
+  {level}_geopotential        (levels: 50,100,150,200,250,300,400,500,600,700,850,925,1000 hPa)
+  {level}_specific_humidity   (same 13 levels)
+  {level}_temperature         (same 13 levels)
+  {level}_u_component_of_wind (same 13 levels)
+  {level}_v_component_of_wind (same 13 levels)
+  {level}_vertical_velocity   (same 13 levels)
+
+--- Interpretation ---
+WN2 is a forecast run dataset, NOT a daily time series.
+- Each calendar day has 4 initialization times (00Z, 06Z, 12Z, 18Z).
+- Each run produces 15 days of forecasts at 6-hourly resolution.
+- 64 real FGN ensemble members per run.
+
+For train_wn2.py design implications:
+1. Must decide which init_time(s) to use (e.g. 00Z only, or all 4).
+2. Must decide which forecast_hour(s) to use (e.g. fh=24 for next-day, or aggregate daily mean).
+3. To match ERA5 train/val split (2018-2019): WN2 starts 2022-01-01, so 2018/2019 is UNAVAILABLE.
+   Train/val split must be 2022 train / 2023 val (or later years).
+4. No daily resampling exists in the asset -- must aggregate 4 x 6hr images per day client-side.
+5. The 5 target atmospheric bands for MHW are present:
+   sea_surface_temperature, 2m_temperature, 10m_u_component_of_wind,
+   10m_v_component_of_wind, mean_sea_level_pressure
