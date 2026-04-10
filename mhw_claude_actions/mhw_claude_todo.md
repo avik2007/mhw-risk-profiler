@@ -6,7 +6,17 @@
 
 ## ACTIVE
 
-*None.*
+### [HIGH PRIORITY] Implement ERA5 Proxy Training Strategy
+**Plan:** `docs/superpowers/plans/2026-04-03-era5-proxy-training.md`
+**Status:** Plan written — ready to execute.
+**Goal:** Unblock model training by using deterministic ERA5 as a proxy for WeatherNext 2, including synthetic ensemble expansion (1 → 64 members) for SVaR validation.
+
+**Tasks:**
+1. Create `src/ingestion/era5_harvester.py` — `ERA5Harvester` class
+2. Add `expand_and_perturb()` to `DataHarmonizer` in `src/ingestion/harvester.py`
+3. Create `scripts/train_era5_proxy.py` — training loop with `--dry-run` flag
+4. Create `tests/test_era5_harvester.py` — 3 offline unit tests
+5. Validation gate: `pytest tests/test_era5_harvester.py -v` + `--dry-run` output
 
 ---
 
@@ -96,6 +106,17 @@ suitable for a statistically robust 90th-percentile MHW threshold (Hobday 2016 r
 
 **When to tackle**: Before production deployment of the MHW threshold. Not blocking
 current development work (2-year proxy threshold is sufficient for pipeline validation).
+
+---
+
+### [LOW PRIORITY] XAI Option C — Member-Level Attribution Variance (ERA5 vs WN2)
+**Goal**: For the WN2-trained model, compute IG attribution variance *across* the 64 real FGN members and compare against the ERA5-trained model (synthetic members). Test whether real FGN ensemble spread produces member-dependent feature importance — i.e., different atmospheric trajectories shift what the model attends to — vs ERA5 synthetic members where attribution variance across members should be near-uniform (only Gaussian noise separates them).
+
+**Prerequisite**: Phase 3 XAI comparison (option A, per-season) complete and `xai_comparison.json` validated.
+
+**Output**: `data/results/xai_member_variance.json` — per-variable attribution std across members, per season, for both models.
+
+**Scientific question**: Does FGN ensemble structure do real statistical work that Gaussian perturbation cannot replicate?
 
 ---
 
