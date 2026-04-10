@@ -25,7 +25,8 @@ ASSET = "projects/gcp-public-data-weathernext/assets/weathernext_2_0_0"
 col = ee.ImageCollection(ASSET)
 
 print("=== WeatherNext 2 Asset Schema ===\n")
-print(f"Total images: {col.size().getInfo()}")
+# NOTE: col.size().getInfo() hangs on this ~30M-image collection — skip it.
+print("Total images: (skipped — collection too large for .size().getInfo())")
 
 # Inspect first image
 first = ee.Image(col.first())
