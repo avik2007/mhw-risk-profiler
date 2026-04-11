@@ -59,14 +59,9 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def load_real_data(args):
+def load_real_data():
     """
     Fetch ERA5 + HYCOM for train (2018) and val (2019) periods.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed CLI args. Used only for side-effect-free access to lr/epochs.
 
     Returns
     -------
@@ -132,7 +127,7 @@ def main():
     else:
         (hycom_t_train, wn2_t_train, label_t_train,
          hycom_t_val, wn2_t_val, label_t_val,
-         merged_val, threshold) = load_real_data(args)
+         merged_val, threshold) = load_real_data()
 
     # Save config before training starts
     config = {
@@ -179,7 +174,7 @@ def main():
             sdd_val, _, _ = model(hycom_t_val, wn2_t_val)
             val_loss = F.mse_loss(sdd_val, label_t_val)
 
-        v95   = sdd_val[0].quantile(0.95).item()
+        v95   = sdd_val[0].quantile(0.95).item()  # batch=1: index 0 is the only sample
         v50   = sdd_val[0].quantile(0.50).item()
         v05   = sdd_val[0].quantile(0.05).item()
         sprd  = v95 - v05
