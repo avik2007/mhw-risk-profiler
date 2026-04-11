@@ -94,7 +94,8 @@ def build_tensors(
         Produced by mhw_detection.compute_climatology().
     seq_len : int
         Number of time steps to use from the atmospheric sequence.
-        Uses the LAST seq_len days of the time axis.
+        Uses the LAST seq_len days of the time axis — most recent atmospheric
+        forcing is most predictive of current thermal stress accumulation.
 
     Returns
     -------
@@ -162,9 +163,13 @@ def run_svar_inference(
     Returns
     -------
     svar_ds : xr.Dataset
-        Dimensions: (latitude, longitude)
-        Variables: SVaR_95, SVaR_50, SVaR_05, spread [deg C * day]
-        Saved to: data/results/{prefix}_svar.zarr
+        Dimensions: (latitude, longitude). Saved to data/results/{prefix}_svar.zarr.
+        SVaR_95 : float [deg C * day] — 95th quantile of per-member SDD predictions;
+            used as the parametric insurance trigger.
+        SVaR_50 : float [deg C * day] — median SDD prediction across ensemble members.
+        SVaR_05 : float [deg C * day] — 5th quantile; lower bound of the ensemble.
+        spread  : float [deg C * day] — SVaR_95 minus SVaR_05; confirms non-degenerate
+            ensemble when positive.
     """
     model.eval()
     lats = merged_val["latitude"].values
@@ -241,8 +246,9 @@ def save_plots(
     Parameters
     ----------
     log_rows : list of dict
-        Per-epoch log records with keys: epoch, train_loss, val_loss,
-        SVaR_95, SVaR_50, SVaR_05, spread, gate_mean.
+        Per-epoch log records. Required keys: epoch, train_loss, val_loss,
+        SVaR_95, SVaR_50, SVaR_05, spread [all deg C * day except epoch and losses].
+        The gate histogram is computed via a forward pass, not from log_rows.
     model : MHWRiskModel
         Trained model in eval mode for final-epoch forward pass.
     hycom_val, wn2_val, label_val : torch.Tensor
