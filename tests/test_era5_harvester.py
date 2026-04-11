@@ -31,10 +31,10 @@ def test_band_mapping():
 def test_output_shape():
     """Output dims are (member=1, time, latitude, longitude)."""
     ds = _make_fake_ds(n_time=10, n_lat=4, n_lon=5)
-    assert ds.dims["member"] == 1
-    assert ds.dims["time"] == 10
-    assert ds.dims["latitude"] == 4
-    assert ds.dims["longitude"] == 5
+    assert ds.sizes["member"] == 1
+    assert ds.sizes["time"] == 10
+    assert ds.sizes["latitude"] == 4
+    assert ds.sizes["longitude"] == 5
 
 
 def test_noise_spread():
@@ -46,7 +46,7 @@ def test_noise_spread():
 
     perturbed = DataHarmonizer.expand_and_perturb(ds, n_members=64, seed=42)
 
-    assert perturbed.dims["member"] == 64
+    assert perturbed.sizes["member"] == 64
 
     sst_std = float(perturbed["sea_surface_temperature"].std("member").mean())
     assert sst_std == pytest.approx(0.5, rel=0.5), (
