@@ -4,6 +4,44 @@
 
 ---
 
+## [2026-04-10] GCP Data Pipeline — Design + Plan Complete
+
+### Context
+User observed that OPeNDAP HYCOM fetching running locally was slow and resource-intensive.
+Decision: move all data loading to GCP (spot GCE VM + GCS caching), training reads GCS only.
+
+### Design decisions (brainstormed and approved)
+- **Architecture**: Option 3 — GCS-aware harvesters + thin orchestrator (not monolithic script, not shell script)
+- **Scope**: Full — all training data pre-fetched (HYCOM tiles, HYCOM climatology, ERA5 tiles, WN2 verified)
+- **Execution model**: Spot GCE VM (`e2-standard-2`, ~$0.05/run) — idempotent, can resume after preemption
+- **Training load path**: GCS-only, no OPeNDAP/GEE fallback. `MHW_GCS_BUCKET` env var required for real runs.
+- **ERA5 period alignment**: ERA5 moved from 2018/2019 → **2022/2023** to match WN2 (apples-to-apples XAI comparison). The 2018/2019 split was a legacy artifact of the old HYCOM coverage constraint, now resolved.
+
+### Artifacts committed
+- `docs/superpowers/specs/2026-04-10-gcp-data-pipeline-design.md` — full design spec (`1397ff6`)
+- `docs/superpowers/plans/2026-04-10-gcp-data-pipeline.md` — 7-task TDD implementation plan (`b8bfb26`)
+- `mhw_claude_actions/mhw_claude_todo.md` — Vertex AI future task added
+
+### GCS layout approved
+```
+gs://<bucket>/
+  weathernext2/cache/       # existing WN2 cache (no change)
+  hycom/climatology/        # 90th-pct threshold (dayofyear, lat, lon)
+  hycom/tiles/2022/         # shared ERA5 + WN2 train tile
+  hycom/tiles/2023/         # shared ERA5 + WN2 val tile
+  era5/2022/                # ERA5 train year (member=1)
+  era5/2023/                # ERA5 val year
+```
+
+### Pre-existing bug identified (to be fixed in Task 4/5)
+Both `train_era5.py` and `train_wn2.py` read `ds["threshold"]` from the threshold Zarr,
+but it is saved as `ds["sst_threshold_90"]`. The new `load_real_data()` implementations fix this.
+
+### Plan ready for execution
+Use `superpowers:subagent-driven-development` next session.
+
+---
+
 ## [2026-04-10] Task 7 — Full test suite + all 3 dry-runs complete
 
 **32/32 tests passed** (`pytest tests/ -v`) — no failures, no warnings after fix below.

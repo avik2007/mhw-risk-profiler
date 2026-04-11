@@ -6,47 +6,39 @@
 
 ## ACTIVE — RESUME HERE NEXT SESSION
 
-### Pre-WeatherNext Analytics — ONE STEP REMAINING
+### GCP Data Pipeline — Execute Plan (Subagent-Driven)
 
-**Current HEAD:** `5e073b7`
+**Current HEAD:** `b8bfb26`
 
-**Already done this session:**
-- `src/analytics/payout.py` ✅ committed `5ea4427` — 11/11 tests pass
-- `scripts/compute_hycom_climatology.py` ✅ committed `5e073b7` — 4/4 tests pass, --help verified
+**Plan:** `docs/superpowers/plans/2026-04-10-gcp-data-pipeline.md`
+**Spec:** `docs/superpowers/specs/2026-04-10-gcp-data-pipeline-design.md`
 
-**Remaining: spot-check the threshold Zarr**
+Use `superpowers:subagent-driven-development` to execute the plan task-by-task.
 
-The OPeNDAP fetch (`conda run -n mhw-risk python scripts/compute_hycom_climatology.py`)
-was running when the session ended. Check if it finished:
+**7 tasks in order:**
+1. `HYCOMLoader.fetch_and_cache()` — TDD, adds to `src/ingestion/harvester.py`
+2. `ERA5Harvester.fetch_and_cache()` — TDD, adds to `src/ingestion/era5_harvester.py`
+3. `_train_utils.py` period alignment — 2022/2023 shared constants, remove ERA5/WN2 pairs
+4. `train_era5.py` GCS-only `load_real_data()` — replaces live OPeNDAP/GEE calls, fixes `ds["threshold"]` bug
+5. `train_wn2.py` GCS-only `load_real_data()` — same pattern, removes `GCS_BUCKET` dependency
+6. `scripts/run_data_prep.py` — idempotent orchestrator for spot GCE VM
+7. `docs/gcp-data-prep-runbook.md` — gcloud VM setup and verification commands
 
-```bash
-ls -lh data/processed/hycom_sst_threshold.zarr 2>/dev/null || echo "not yet — re-run the script"
-```
-
-If the Zarr exists, run the spot-check:
-
-```bash
-conda run -n mhw-risk python -c "
-import xarray as xr
-ds = xr.open_zarr('data/processed/hycom_sst_threshold.zarr')
-t = ds['sst_threshold_90']
-print('Shape:', dict(t.sizes))
-print('Summer peak (doy=213):', t.sel(dayofyear=213).values.mean().round(2), 'degC')
-print('Winter trough (doy=15):', t.sel(dayofyear=15).values.mean().round(2), 'degC')
-print('Spatial std at summer peak:', t.sel(dayofyear=213).values.std().round(3))
-"
-```
-
-Expected: summer mean > winter mean; spatial std > 0 (location-varying confirmed).
-
-Then update recentactions and move to the NEXT section below.
+After all tasks pass tests and dry-runs confirm no regressions, the pipeline is ready
+to run on a spot GCE VM (`e2-standard-2`, ~$0.05/run). See runbook for VM setup.
 
 ---
 
-## NEXT (after analytics completions)
+## NEXT (after pipeline implementation)
+
+### Run data prep job on spot GCE VM
+See `docs/gcp-data-prep-runbook.md` for exact commands.
+Prerequisite: all 7 pipeline tasks complete and tests passing.
 
 ### Real training runs on GCP
-ERA5 and WN2 real runs require GCP (n2-standard-8 or T4 GPU). Prerequisite: `hycom_sst_threshold.zarr` from analytics step 2 above.
+ERA5 and WN2 real runs on GCP (n2-standard-8 or T4 GPU).
+Prerequisite: GCS data prep complete (`hycom/tiles/2022`, `hycom/tiles/2023`,
+`hycom/climatology`, `era5/2022`, `era5/2023` all populated).
 
 ---
 
