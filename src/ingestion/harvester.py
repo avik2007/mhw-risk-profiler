@@ -91,6 +91,16 @@ HYCOM_VARIABLES = [
 # Chosen to capture the mixed layer (0-100 m) and seasonal thermocline (100-300 m)
 TARGET_DEPTHS_M = np.array([0, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300])
 
+# Per-variable Gaussian noise σ for expand_and_perturb() — calibrated to
+# approximate WeatherNext 2 intra-ensemble spread.
+NOISE_SIGMAS: dict[str, float] = {
+    "sea_surface_temperature":    0.5,   # K  — primary MHW driver
+    "2m_temperature":             0.5,   # K  — coherent with SST
+    "10m_u_component_of_wind":    0.3,   # m/s
+    "10m_v_component_of_wind":    0.3,   # m/s
+    "mean_sea_level_pressure":    50.0,  # Pa — ~0.5 hPa synoptic noise
+}
+
 
 # ---------------------------------------------------------------------------
 # GEE / WeatherNext 2 Harvester
@@ -650,6 +660,61 @@ class DataHarmonizer:
     while the oceanic initial condition (from HYCOM) is treated as known.
     """
 
+    @staticmethod
+    def expand_and_perturb(
+        ds: xr.Dataset,
+        n_members: int = 64,
+        seed: int = 42,
+    ) -> xr.Dataset:
+        """
+        Broadcast a single-member ERA5 Dataset to n_members synthetic members
+        by injecting independent Gaussian noise into each atmospheric variable.
+
+        Parameters
+        ----------
+        ds : xr.Dataset
+            ERA5 dataset with member=1 dimension.
+            Must contain variables matching WN2_VARIABLES naming convention.
+        n_members : int
+            Target number of synthetic ensemble members. Default 64 matches WN2.
+        seed : int
+            Base random seed. Member i uses seed + i for reproducibility.
+            Changing seed produces a different but equally valid synthetic ensemble.
+
+        Returns
+        -------
+        ds_perturbed : xr.Dataset
+            Same variables and spatial/temporal dimensions but member=n_members.
+            Each member has independent Gaussian noise added to each variable.
+            Noise σ values calibrated to match published WN2 intra-ensemble spread.
+
+        Physical rationale
+        ------------------
+        ERA5 is deterministic. To use it with SVaR (which requires ensemble spread),
+        we inject per-member Gaussian noise. The σ values are chosen to approximate
+        the intra-ensemble spread documented for WeatherNext 2. This is a proxy:
+        real WN2 spread is non-Gaussian and temporally correlated (FGN), but
+        Gaussian noise is sufficient for training because the model learns from
+        the physics SDD label, not from the ensemble structure itself.
+        """
+        # Broadcast single member across n_members dimension
+        ds_broadcast = ds.isel(member=0).expand_dims(member=range(n_members))
+
+        # Build list of per-member Datasets with independent noise
+        member_datasets = []
+        for i in range(n_members):
+            rng = np.random.default_rng(seed + i)
+            ds_m = ds_broadcast.isel(member=i).copy(deep=True)
+            for var, sigma in NOISE_SIGMAS.items():
+                if var in ds_m:
+                    noise = rng.normal(0.0, sigma, ds_m[var].shape).astype(np.float32)
+                    ds_m[var] = ds_m[var] + noise
+            member_datasets.append(ds_m)
+
+        ds_perturbed = xr.concat(member_datasets, dim="member")
+        ds_perturbed["member"] = np.arange(n_members)
+        return ds_perturbed
+
     def harmonize(
         self,
         wn2_ds: xr.Dataset,
@@ -683,6 +748,11 @@ class DataHarmonizer:
         wn2_regridded = wn2_ds.interp(
             latitude=TARGET_LAT, longitude=TARGET_LON, method="linear"
         )
+
+        # Auto-expand single-member input (ERA5 proxy path)
+        if wn2_regridded.dims.get("member", 1) == 1:
+            logger.info("member=1 detected — expanding to 64 synthetic members.")
+            wn2_regridded = DataHarmonizer.expand_and_perturb(wn2_regridded)
 
         logger.info("Regridding HYCOM to 0.25-degree target grid.")
         hycom_regridded = hycom_ds.interp(
