@@ -4,6 +4,47 @@
 
 ---
 
+## [2026-04-10] Task 7 — Full test suite + all 3 dry-runs complete
+
+**32/32 tests passed** (`pytest tests/ -v`) — no failures, no warnings after fix below.
+
+**FutureWarning fix:** `test_era5_harvester.py` replaced `ds.dims[...]` with `ds.sizes[...]`
+throughout — xarray deprecated `.dims` as a length mapping in favour of `.sizes`.
+Commit: `83bced6`
+
+**3 dry-runs in sequence — all clean:**
+- `train_era5.py --dry-run --epochs 5`: 5 epochs, artifacts saved under `data/` (CUDA)
+- `train_wn2.py  --dry-run --epochs 5`: 5 epochs, artifacts saved under `data/` (CUDA)
+- `compare_xai.py --dry-run`: 4 seasons, `xai_comparison.json` saved, no warnings
+
+**ERA5/WN2 dual training plan fully complete.** All 8 tasks done.
+
+---
+
+## [2026-04-10] compare_xai.py — OOM bug fixed, dry-run gate passed
+
+**Context:** Running the Task 6 dry-run was crashing the local machine (swap thrash).
+
+**Root cause:** Captum IG with `n_steps=50` stacks all 50 alpha-scaled inputs along the batch
+dimension before the forward pass. Inside `MHWRiskModel.forward()`, the member dimension is
+flattened into batch: effective batch = `n_steps × N_MEMBERS = 50 × 64 = 3200`. The Transformer
+attention weights `(3200, 8, 90, 90)` consumed ~828 MB per layer × 4 layers = ~3.3 GB simultaneously,
+exhausting RAM and hammering swap to disk.
+
+**Fix:** Added `internal_batch_size=5` to `ig.attribute()` in `run_season_ig()`. This caps the
+effective Transformer batch at `5 × 64 = 320`, reducing peak attention memory to ~330 MB.
+Also added `.detach()` before `abs()` on attribution tensors to suppress a spurious Captum
+autograd warning.
+
+**Verification:** `conda run -n mhw-risk python scripts/compare_xai.py --dry-run` — clean output,
+all 4 seasons, `xai_comparison.json` saved. No warnings.
+
+**Lesson recorded:** `mhw_claude_lessons.md` + `CLAUDE.md` Lessons Applied section updated.
+
+**Status:** compare_xai.py changes uncommitted (pending Task 7 commit).
+
+---
+
 ## [2026-04-10] ERA5/WN2 Dual Training Plan — Execution Started (Tasks 0 & 1 complete)
 
 Executing plan at `docs/superpowers/plans/2026-04-10-era5-wn2-dual-training.md`

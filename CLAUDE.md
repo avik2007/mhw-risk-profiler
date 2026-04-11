@@ -130,3 +130,4 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-03-27] HYCOM longitude is 0-360; decode_times=False required; filter time by raw float index before isel
 [2026-03-27] zarr v3 installed (satisfies >=2.17); use gs:// URI in to_zarr/open_zarr, not gcsfs.GCSMap
 [2026-03-27] google-cloud-storage and gcsfs missing from requirements.txt — add both
+[2026-04-10] Captum IG with N_MEMBERS=64 and n_steps=50 → effective batch 3200 → ~3.3 GB attention → swap thrash; fix: internal_batch_size=5 in ig.attribute()

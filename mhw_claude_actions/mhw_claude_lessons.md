@@ -19,6 +19,14 @@
 
 ---
 
+## [2026-04-10] Captum IG + large member dimension causes disk thrashing
+
+- With `N_MEMBERS=64` and Captum's default full-batch IG (`n_steps=50`), the effective Transformer batch is `n_steps × M = 50 × 64 = 3200`. Attention weights `(3200, 8, 90, 90)` consume ~828 MB per layer × 4 layers = ~3.3 GB, exhausting RAM and hammering swap to disk.
+- Fix: pass `internal_batch_size=5` to `ig.attribute()`. This caps the Transformer batch at `5 × 64 = 320`, reducing peak attention memory to ~330 MB.
+- Rule: any Captum IG call that passes the member dimension inside the batch tensor MUST set `internal_batch_size ≤ 10` to stay under ~1 GB peak.
+
+---
+
 ## [2026-03-24] Cloud Infrastructure & Credential Handling
 
 - `Storage Object Admin` alone causes a 403 `storage.buckets.get` error — bucket-level access
