@@ -697,14 +697,12 @@ class DataHarmonizer:
         Gaussian noise is sufficient for training because the model learns from
         the physics SDD label, not from the ensemble structure itself.
         """
-        # Broadcast single member across n_members dimension
-        ds_broadcast = ds.isel(member=0).expand_dims(member=range(n_members))
-
         # Build list of per-member Datasets with independent noise
+        ds_base = ds.isel(member=0)
         member_datasets = []
         for i in range(n_members):
             rng = np.random.default_rng(seed + i)
-            ds_m = ds_broadcast.isel(member=i).copy(deep=True)
+            ds_m = ds_base.copy(deep=True)
             for var, sigma in NOISE_SIGMAS.items():
                 if var in ds_m:
                     noise = rng.normal(0.0, sigma, ds_m[var].shape).astype(np.float32)

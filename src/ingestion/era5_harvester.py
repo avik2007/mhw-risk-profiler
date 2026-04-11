@@ -163,16 +163,23 @@ class ERA5Harvester:
         for era5_band, wn2_name in ERA5_BANDS.items():
             arr = np.stack(data_by_var[era5_band], axis=0)  # (time, lat, lon)
             arr = arr[np.newaxis, ...]                       # (member=1, time, lat, lon)
-            first_img_arr = data_by_var[era5_band][0]
-            n_lat, n_lon = first_img_arr.shape
             ds_vars[wn2_name] = xr.DataArray(
                 arr,
                 dims=["member", "time", "latitude", "longitude"],
             )
 
+        # Reconstruct lat/lon coordinate arrays from bbox and array shape.
+        # GEE sampleRectangle returns rows north-to-south, so lat is descending.
+        first_band = next(iter(ERA5_BANDS))
+        n_lat, n_lon = data_by_var[first_band][0].shape
+        lat_coords = np.linspace(lat_max, lat_min, n_lat)
+        lon_coords = np.linspace(lon_min, lon_max, n_lon)
+
         ds = xr.Dataset(ds_vars).assign_coords(
             member=[0],
             time=time_coords,
+            latitude=lat_coords,
+            longitude=lon_coords,
         )
 
         logger.info("ERA5 dataset built: %s", ds)
