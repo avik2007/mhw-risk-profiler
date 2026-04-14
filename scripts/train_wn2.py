@@ -61,50 +61,49 @@ def parse_args() -> argparse.Namespace:
 
 def load_real_data():
     """
-    Fetch WeatherNext 2 + HYCOM for train (2022) and val (2023) periods.
+    Load WeatherNext 2 + HYCOM from GCS for train (2022) and val (2023) periods.
 
-    WN2 returns member=64 real FGN ensemble members. DataHarmonizer.harmonize()
-    detects member=64 and skips expand_and_perturb() (which is only applied for
-    ERA5's single deterministic member).
+    All data was pre-fetched to GCS by scripts/run_data_prep.py.
+    Requires env var MHW_GCS_BUCKET (e.g. "gs://my-bucket").
+    No live OPeNDAP or GEE calls are made here.
+
+    WN2 tiles live under the existing WeatherNext2Harvester cache path:
+    gs://bucket/weathernext2/cache/wn2_YYYY-MM-DD_YYYY-MM-DD_m64.zarr
+    HYCOM tiles are shared with the ERA5 training run.
 
     Returns
     -------
     Tuple of (hycom_t_train, wn2_t_train, label_t_train,
               hycom_t_val, wn2_t_val, label_t_val,
               merged_val, threshold)
-        All tensors are float32. merged_val is the harmonized 2023 Dataset
-        used for per-grid-cell SVaR inference after training.
     """
     import os
-    from src.ingestion.harvester import WeatherNext2Harvester, DataHarmonizer, HYCOMLoader
+    from src.ingestion.harvester import DataHarmonizer
 
-    threshold_path = Path("data/processed/hycom_sst_threshold.zarr")
-    if not threshold_path.exists():
-        raise FileNotFoundError(
-            "ERROR: hycom_sst_threshold.zarr not found. "
-            "Run scripts/compute_hycom_climatology.py first."
+    bucket = os.environ.get("MHW_GCS_BUCKET", "").rstrip("/")
+    if not bucket:
+        raise RuntimeError(
+            "MHW_GCS_BUCKET env var not set. "
+            "Run scripts/run_data_prep.py on GCP first, then set this variable."
         )
-    threshold = xr.open_zarr(str(threshold_path))["threshold"]
 
-    gcs_bucket = os.environ["GCS_BUCKET"]  # set in environment; see mondal-mhw-gcp-info.md
-    key        = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-    harvester  = WeatherNext2Harvester(gcs_bucket=gcs_bucket, service_account_key=key)
-    harvester.authenticate()
-    loader     = HYCOMLoader()
     harmonizer = DataHarmonizer()
+    threshold  = xr.open_zarr(f"{bucket}/hycom/climatology/")["sst_threshold_90"]
 
-    print("Fetching WeatherNext 2 train (2022)...")
-    wn2_train   = harvester.fetch_ensemble(*TRAIN_PERIOD, GoM_BBOX)
-    hycom_train = loader.fetch_tile(*TRAIN_PERIOD, GoM_BBOX)
+    print("Loading WN2 train (2022) from GCS...")
+    wn2_train   = xr.open_zarr(
+        f"{bucket}/weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr", chunks="auto"
+    )
+    hycom_train = xr.open_zarr(f"{bucket}/hycom/tiles/2022/", chunks="auto")
     merged_train = harmonizer.harmonize(wn2_train, hycom_train)
-    # WN2 returns member=64 — harmonize() skips expand_and_perturb automatically
     hycom_t_train, wn2_t_train, label_t_train = build_tensors(merged_train, threshold)
 
-    print("Fetching WeatherNext 2 val (2023)...")
-    wn2_val      = harvester.fetch_ensemble(*VAL_PERIOD, GoM_BBOX)
-    hycom_val_ds = loader.fetch_tile(*VAL_PERIOD, GoM_BBOX)
-    merged_val   = harmonizer.harmonize(wn2_val, hycom_val_ds)
+    print("Loading WN2 val (2023) from GCS...")
+    wn2_val   = xr.open_zarr(
+        f"{bucket}/weathernext2/cache/wn2_2023-01-01_2023-12-31_m64.zarr", chunks="auto"
+    )
+    hycom_val = xr.open_zarr(f"{bucket}/hycom/tiles/2023/", chunks="auto")
+    merged_val = harmonizer.harmonize(wn2_val, hycom_val)
     hycom_t_val, wn2_t_val, label_t_val = build_tensors(merged_val, threshold)
 
     return (hycom_t_train, wn2_t_train, label_t_train,
