@@ -37,6 +37,7 @@ from typing import Optional
 
 import dask
 import dask.array as da
+import gcsfs
 import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
@@ -551,6 +552,47 @@ class HYCOMLoader:
         ds_std = self._interpolate_to_standard_depths(ds_raw)
         logger.info("HYCOM tile loaded and interpolated: %s", ds_std)
         return ds_std
+
+    def fetch_and_cache(
+        self,
+        year: int,
+        bbox: tuple[float, float, float, float],
+        gcs_uri: str,
+    ) -> None:
+        """
+        Fetch one full calendar year of HYCOM data and write to GCS as Zarr.
+
+        Parameters
+        ----------
+        year : int
+            Calendar year to fetch (Jan 1 – Dec 31).
+            Must be within HYCOM GLBy0.08/expt_93.0 coverage (2018-12-04 to 2024-09-04).
+        bbox : tuple of float
+            (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84.
+        gcs_uri : str
+            GCS destination, e.g. "gs://bucket/hycom/tiles/2022/".
+            If the URI already exists, returns immediately — idempotent, safe to re-run
+            after a spot VM preemption.
+
+        Side effects
+        ------------
+        Writes a Zarr store to gcs_uri with dims (time, depth, lat, lon)
+        and variables: water_temp [°C], salinity [psu], water_u [m/s], water_v [m/s].
+        Credentials are read from GOOGLE_APPLICATION_CREDENTIALS automatically by gcsfs.
+        """
+        fs = gcsfs.GCSFileSystem()
+        path = gcs_uri.removeprefix("gs://")
+        if fs.exists(path):
+            logger.info("Cache hit — skipping HYCOM fetch for %d: %s", year, gcs_uri)
+            return
+
+        start_date = f"{year}-01-01"
+        end_date   = f"{year}-12-31"
+        logger.info("Fetching HYCOM year %d (%s to %s)...", year, start_date, end_date)
+
+        ds = self.fetch_tile(start_date, end_date, bbox)
+        ds.to_zarr(gcs_uri, mode="w", consolidated=True)
+        logger.info("HYCOM year %d written to %s", year, gcs_uri)
 
     def _interpolate_to_standard_depths(self, ds: xr.Dataset) -> xr.Dataset:
         """
