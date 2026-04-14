@@ -27,6 +27,7 @@ import logging
 import os
 from typing import Optional
 
+import gcsfs
 import numpy as np
 import xarray as xr
 
@@ -184,3 +185,52 @@ class ERA5Harvester:
 
         logger.info("ERA5 dataset built: %s", ds)
         return ds
+
+    def fetch_and_cache(
+        self,
+        year: int,
+        bbox: tuple[float, float, float, float],
+        gcs_uri: str,
+    ) -> None:
+        """
+        Fetch one full calendar year of ERA5 data from GEE and write to GCS as Zarr.
+
+        Parameters
+        ----------
+        year : int
+            Calendar year to fetch (Jan 1 – Dec 31).
+            ECMWF/ERA5/DAILY on GEE covers 1979–present.
+        bbox : tuple of float
+            (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84, -180–180 convention.
+            Passed directly to fetch() without transformation.
+            Source: project-standard Gulf of Maine region, e.g. (-71.0, 41.0, -66.0, 45.0).
+        gcs_uri : str
+            GCS destination, e.g. "gs://bucket/era5/2022/".
+            If the URI already exists, returns immediately — idempotent, safe to re-run
+            after a spot VM preemption.
+
+        Side effects
+        ------------
+        Writes a Zarr store to gcs_uri with dims (member=1, time, latitude, longitude)
+        and WN2-compatible variable names. This Zarr store is the canonical ERA5 input tile
+        for the MHW risk training pipeline; read by run_data_prep.py and train_era5.py
+        via xr.open_zarr(). Downstream callers must invoke DataHarmonizer.expand_and_perturb()
+        (via harmonize()) to expand to 64 synthetic members.
+        Credentials are read from GOOGLE_APPLICATION_CREDENTIALS automatically by gcsfs.
+        """
+        if not self._initialized:
+            raise RuntimeError("Call authenticate() before fetch_and_cache().")
+
+        fs = gcsfs.GCSFileSystem()
+        path = gcs_uri.removeprefix("gs://")  # Python 3.9+ — enforced by Dockerfile (python:3.11-slim)
+        if fs.exists(path):
+            logger.info("Cache hit — skipping ERA5 fetch for %d: %s", year, gcs_uri)
+            return
+
+        start_date = f"{year}-01-01"
+        end_date   = f"{year}-12-31"
+        logger.info("Fetching ERA5 year %d (%s to %s)...", year, start_date, end_date)
+
+        ds = self.fetch(start_date, end_date, bbox)
+        ds.to_zarr(gcs_uri, mode="w", consolidated=True)
+        logger.info("ERA5 year %d written to %s", year, gcs_uri)
