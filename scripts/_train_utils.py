@@ -36,19 +36,11 @@ from src.analytics.sdd import accumulate_sdd
 
 GoM_BBOX     = (-71.0, 41.0, -66.0, 45.0)   # (lon_min, lat_min, lon_max, lat_max)
 
-# ERA5 training periods: 2018 reanalysis train, 2019 reanalysis val
-ERA5_TRAIN_PERIOD = ("2018-01-01", "2018-12-31")
-ERA5_VAL_PERIOD   = ("2019-01-01", "2019-12-31")
-
-# WN2 training periods: 2022 forecast runs train, 2023 forecast runs val
-# WN2 uses 2022+ because GLBy0.08/expt_93.0 covers 2018-12-04 to 2024-09-04
-# and WN2 forecast run structure starts from 2022-present in the GEE asset.
-WN2_TRAIN_PERIOD  = ("2022-01-01", "2022-12-31")
-WN2_VAL_PERIOD    = ("2023-01-01", "2023-12-31")
-
-# Backward-compat aliases (ERA5 periods) — used by existing test code
-TRAIN_PERIOD = ERA5_TRAIN_PERIOD
-VAL_PERIOD   = ERA5_VAL_PERIOD
+# Shared training periods for ERA5 and WN2.
+# Both use 2022/2023 for apples-to-apples XAI comparison. ERA5 covers 1979-present
+# on GEE; WN2 covers 2022-present. HYCOM GLBy0.08/expt_93.0 covers through 2024-09-04.
+TRAIN_PERIOD = ("2022-01-01", "2022-12-31")
+VAL_PERIOD   = ("2023-01-01", "2023-12-31")
 
 SEQ_LEN      = 90     # atmospheric sequence length [days] fed to TransformerEncoder
 N_MEMBERS    = 64     # ensemble members (WN2) / synthetic members (ERA5 proxy)

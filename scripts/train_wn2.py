@@ -43,7 +43,7 @@ import xarray as xr
 
 from src.models.ensemble_wrapper import MHWRiskModel
 from _train_utils import (
-    GoM_BBOX, WN2_TRAIN_PERIOD, WN2_VAL_PERIOD, N_MEMBERS, SEQ_LEN,
+    GoM_BBOX, TRAIN_PERIOD, VAL_PERIOD, N_MEMBERS, SEQ_LEN,
     build_tensors, run_svar_inference, save_plots,
 )
 
@@ -95,15 +95,15 @@ def load_real_data():
     harmonizer = DataHarmonizer()
 
     print("Fetching WeatherNext 2 train (2022)...")
-    wn2_train   = harvester.fetch_ensemble(*WN2_TRAIN_PERIOD, GoM_BBOX)
-    hycom_train = loader.fetch_tile(*WN2_TRAIN_PERIOD, GoM_BBOX)
+    wn2_train   = harvester.fetch_ensemble(*TRAIN_PERIOD, GoM_BBOX)
+    hycom_train = loader.fetch_tile(*TRAIN_PERIOD, GoM_BBOX)
     merged_train = harmonizer.harmonize(wn2_train, hycom_train)
     # WN2 returns member=64 — harmonize() skips expand_and_perturb automatically
     hycom_t_train, wn2_t_train, label_t_train = build_tensors(merged_train, threshold)
 
     print("Fetching WeatherNext 2 val (2023)...")
-    wn2_val      = harvester.fetch_ensemble(*WN2_VAL_PERIOD, GoM_BBOX)
-    hycom_val_ds = loader.fetch_tile(*WN2_VAL_PERIOD, GoM_BBOX)
+    wn2_val      = harvester.fetch_ensemble(*VAL_PERIOD, GoM_BBOX)
+    hycom_val_ds = loader.fetch_tile(*VAL_PERIOD, GoM_BBOX)
     merged_val   = harmonizer.harmonize(wn2_val, hycom_val_ds)
     hycom_t_val, wn2_t_val, label_t_val = build_tensors(merged_val, threshold)
 
@@ -143,8 +143,8 @@ def main():
         "n_members": N_MEMBERS,
         "seq_len": SEQ_LEN,
         "domain_bbox": GoM_BBOX,
-        "train_period": list(WN2_TRAIN_PERIOD),
-        "val_period": list(WN2_VAL_PERIOD),
+        "train_period": list(TRAIN_PERIOD),
+        "val_period": list(VAL_PERIOD),
         "grad_clip_max_norm": 1.0,
         "dry_run": args.dry_run,
         "note": "Real FGN ensemble — no expand_and_perturb applied",

@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.models.ensemble_wrapper import MHWRiskModel
 from _train_utils import (
-    GoM_BBOX, ERA5_TRAIN_PERIOD, ERA5_VAL_PERIOD, N_MEMBERS, SEQ_LEN,
+    GoM_BBOX, TRAIN_PERIOD, VAL_PERIOD, N_MEMBERS, SEQ_LEN,
     build_tensors, run_svar_inference, save_plots,
 )
 
@@ -87,16 +87,16 @@ def load_real_data():
     loader    = HYCOMLoader()
     harmonizer = DataHarmonizer()
 
-    print("Fetching ERA5 train (2018)...")
-    wn2_train  = harvester.fetch(*ERA5_TRAIN_PERIOD, GoM_BBOX)
-    hycom_train = loader.fetch_tile(*ERA5_TRAIN_PERIOD, GoM_BBOX)
+    print("Fetching ERA5 train (2022)...")
+    wn2_train  = harvester.fetch(*TRAIN_PERIOD, GoM_BBOX)
+    hycom_train = loader.fetch_tile(*TRAIN_PERIOD, GoM_BBOX)
     merged_train = harmonizer.harmonize(wn2_train, hycom_train)
     # harmonize() calls expand_and_perturb() automatically when member=1
     hycom_t_train, wn2_t_train, label_t_train = build_tensors(merged_train, threshold)
 
-    print("Fetching ERA5 val (2019)...")
-    wn2_val   = harvester.fetch(*ERA5_VAL_PERIOD, GoM_BBOX)
-    hycom_val_ds = loader.fetch_tile(*ERA5_VAL_PERIOD, GoM_BBOX)
+    print("Fetching ERA5 val (2023)...")
+    wn2_val   = harvester.fetch(*VAL_PERIOD, GoM_BBOX)
+    hycom_val_ds = loader.fetch_tile(*VAL_PERIOD, GoM_BBOX)
     merged_val = harmonizer.harmonize(wn2_val, hycom_val_ds)
     hycom_t_val, wn2_t_val, label_t_val = build_tensors(merged_val, threshold)
 
@@ -137,8 +137,8 @@ def main():
         "n_members": N_MEMBERS,
         "seq_len": SEQ_LEN,
         "domain_bbox": GoM_BBOX,
-        "train_period": ERA5_TRAIN_PERIOD,
-        "val_period": ERA5_VAL_PERIOD,
+        "train_period": TRAIN_PERIOD,
+        "val_period": VAL_PERIOD,
         "grad_clip_max_norm": 1.0,
         "dry_run": args.dry_run,
     }
