@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.models.ensemble_wrapper import MHWRiskModel
 from _train_utils import (
     GoM_BBOX, TRAIN_PERIOD, VAL_PERIOD, N_MEMBERS, SEQ_LEN,
+    HYCOM_VARS, WN2_VARS,
     build_tensors, run_svar_inference, save_plots,
 )
 
@@ -123,8 +124,31 @@ def main():
         hycom_t_val   = torch.randn(1, M, 11, 4)
         wn2_t_val     = torch.randn(1, M, SEQ_LEN, 5)
         label_t_val   = torch.rand(1, M) * 20.0
-        merged_val    = None
-        threshold     = None
+        # Synthetic merged_val for dry-run SVaR — 3×4 GoM sub-grid, 120 days, M members
+        import pandas as pd
+        _times = pd.date_range("2022-01-01", periods=120, freq="D")
+        _lats  = [42.0, 43.0, 44.0]
+        _lons  = [-70.0, -69.0, -68.0, -67.0]
+        _nl, _nlo, _nd, _M = len(_lats), len(_lons), 11, M
+        _rng = np.random.default_rng(42)
+        _hycom_data = {
+            v: xr.DataArray(
+                _rng.standard_normal((_M, len(_times), _nd, _nl, _nlo)).astype(np.float32),
+                dims=["member", "time", "depth", "latitude", "longitude"],
+                coords={"time": _times, "latitude": _lats, "longitude": _lons},
+            )
+            for v in HYCOM_VARS
+        }
+        _wn2_data = {
+            v: xr.DataArray(
+                (_rng.standard_normal((_M, len(_times), _nl, _nlo)) + 280.0).astype(np.float32),
+                dims=["member", "time", "latitude", "longitude"],
+                coords={"time": _times, "latitude": _lats, "longitude": _lons},
+            )
+            for v in WN2_VARS
+        }
+        merged_val = xr.Dataset({**_hycom_data, **_wn2_data})
+        threshold  = None
     else:
         (hycom_t_train, wn2_t_train, label_t_train,
          hycom_t_val, wn2_t_val, label_t_val,
