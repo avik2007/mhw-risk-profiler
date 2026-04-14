@@ -2,15 +2,15 @@
 """
 train_era5.py — Train MHWRiskModel on ERA5 proxy data
 ======================================================
-Trains on 2018 ERA5 data (synthetic ensemble via expand_and_perturb),
-validates on 2019 ERA5 data, saves all artifacts.
+Trains on 2022 ERA5 data (synthetic ensemble via expand_and_perturb),
+validates on 2023 ERA5 data, saves all artifacts.
 
 Usage:
-    # Dry-run (no GEE/HYCOM calls — uses synthetic tensors):
+    # Dry-run (no GCS calls — uses synthetic tensors):
     conda run -n mhw-risk python scripts/train_era5.py --dry-run
 
-    # Real training (requires GEE auth and HYCOM connectivity):
-    export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json
+    # Real training (requires MHW_GCS_BUCKET set; run run_data_prep.py first):
+    export MHW_GCS_BUCKET=gs://your-bucket-name
     conda run -n mhw-risk python scripts/train_era5.py --epochs 50
 
 Artifacts saved
