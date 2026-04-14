@@ -568,7 +568,10 @@ class HYCOMLoader:
             Calendar year to fetch (Jan 1 – Dec 31).
             Must be within HYCOM GLBy0.08/expt_93.0 coverage (2018-12-04 to 2024-09-04).
         bbox : tuple of float
-            (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84.
+            (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84, -180–180 convention.
+            Passed directly to fetch_tile() without transformation. Note: HYCOM source uses
+            0–360 longitude internally; fetch_tile() handles the conversion transparently.
+            Source: project-standard Gulf of Maine region, e.g. (-71.0, 41.0, -66.0, 45.0).
         gcs_uri : str
             GCS destination, e.g. "gs://bucket/hycom/tiles/2022/".
             If the URI already exists, returns immediately — idempotent, safe to re-run
@@ -578,10 +581,13 @@ class HYCOMLoader:
         ------------
         Writes a Zarr store to gcs_uri with dims (time, depth, lat, lon)
         and variables: water_temp [°C], salinity [psu], water_u [m/s], water_v [m/s].
+        This Zarr store is the canonical HYCOM input tile for the MHW detection and SVaR
+        analytics pipeline for this year/region; it is read by run_data_prep.py and
+        train_era5.py / train_wn2.py via xr.open_zarr().
         Credentials are read from GOOGLE_APPLICATION_CREDENTIALS automatically by gcsfs.
         """
         fs = gcsfs.GCSFileSystem()
-        path = gcs_uri.removeprefix("gs://")
+        path = gcs_uri.removeprefix("gs://")  # Python 3.9+ — enforced by Dockerfile (python:3.11-slim)
         if fs.exists(path):
             logger.info("Cache hit — skipping HYCOM fetch for %d: %s", year, gcs_uri)
             return

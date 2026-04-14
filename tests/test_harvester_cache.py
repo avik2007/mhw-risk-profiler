@@ -43,3 +43,14 @@ class TestHYCOMLoaderFetchAndCache:
             mock_fs_cls.return_value.exists.return_value = True
             loader.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/hycom/tiles/2022/")
             mock_fs_cls.return_value.exists.assert_called_once_with("bucket/hycom/tiles/2022/")
+
+    def test_fetch_raises_propagates_without_writing(self):
+        """If fetch_tile raises, the exception propagates and to_zarr is never called."""
+        loader = HYCOMLoader()
+        with patch("src.ingestion.harvester.gcsfs.GCSFileSystem") as mock_fs_cls, \
+             patch.object(loader, "fetch_tile", side_effect=RuntimeError("OPeNDAP timeout")), \
+             patch("xarray.Dataset.to_zarr") as mock_to_zarr:
+            mock_fs_cls.return_value.exists.return_value = False
+            with pytest.raises(RuntimeError, match="OPeNDAP timeout"):
+                loader.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/hycom/tiles/2022/")
+            mock_to_zarr.assert_not_called()
