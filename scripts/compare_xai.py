@@ -283,6 +283,38 @@ def save_attribution_plots(result: dict, out_dir: str = "data/results/xai") -> N
     ig_attribution_SON.png — same for SON
     Each chart shows atmospheric vars (top panel) and HYCOM vars (bottom panel).
     Bar colour: steelblue = ERA5, tomato = WN2.
+
+    Notes
+    -----
+    Integrated Gradients (IG) measures the contribution of each input variable to the
+    model's latent fusion output. Higher absolute IG = stronger influence on the learned
+    representation of MHW risk patterns. The latent representation captures both HYCOM
+    and atmospheric contributions before the final linear SDD projection, making it a
+    pure measure of physical importance rather than artifact of final layer bias.
+
+    Attribution values are dimensionless (normalized gradients multiplied by input
+    magnitude). They are comparable across variables within a season but not across
+    seasons without normalization.
+
+    Atmospheric variables (WeatherNext 2):
+    - sea surface temperature [K]: captures rapid SST forcing; key trigger for MHW onset
+    - 2m air temperature [K]: measures atmospheric heat content; modulates air-sea flux
+    - u-wind, v-wind [m/s]: wind-driven mixing and entrainment; controls SST cooling
+    - mean sea level pressure [Pa]: geostrophic forcing; anticyclones suppress mixing
+
+    HYCOM variables (subsurface):
+    - water temperature [K]: vertical thermal structure; controls MHW penetration depth
+    - salinity [PSU]: density stratification; can suppress mixing and prolong MHW duration
+    - u-current, v-current [m/s]: advection of warm/cold water; determines regional
+      anomaly persistence
+
+    Financial interpretation:
+    Comparing ERA5 and WN2 bar heights reveals whether the deterministic reanalysis and
+    the stochastic ensemble emphasise the same physical drivers of MHW risk. Large deltas
+    (WN2 - ERA5) for specific variables indicate the probabilistic forecast captures
+    ensemble uncertainty differently, a key validity check before underwriting parametric
+    insurance triggers derived from either dataset. Consensus high IG across both models
+    strengthens confidence in risk factor selection.
     """
     import matplotlib.pyplot as plt
     Path(out_dir).mkdir(parents=True, exist_ok=True)
