@@ -262,6 +262,75 @@ def compute_delta(era5_season: dict, wn2_season: dict) -> dict:
     return delta
 
 
+def save_attribution_plots(result: dict, out_dir: str = "data/results/xai") -> None:
+    """
+    Save per-season IG attribution bar charts for ERA5 and WN2 models.
+
+    Parameters
+    ----------
+    result : dict
+        XAI comparison result as returned by main() — keys 'era5', 'wn2', 'delta'.
+        Each season entry has 'atm' (5 WN2 vars) and 'hycom' (4 HYCOM vars) sub-dicts
+        mapping variable name → mean absolute IG attribution [dimensionless].
+    out_dir : str
+        Directory to write PNG files. Created if absent.
+
+    Plots saved
+    -----------
+    ig_attribution_DJF.png — side-by-side ERA5 vs WN2 attribution bar chart for DJF
+    ig_attribution_MAM.png — same for MAM
+    ig_attribution_JJA.png — same for JJA
+    ig_attribution_SON.png — same for SON
+    Each chart shows atmospheric vars (top panel) and HYCOM vars (bottom panel).
+    Bar colour: steelblue = ERA5, tomato = WN2.
+    """
+    import matplotlib.pyplot as plt
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+    seasons = ["DJF", "MAM", "JJA", "SON"]
+    for season in seasons:
+        era5_atm   = result["era5"][season]["atm"]
+        era5_hycom = result["era5"][season]["hycom"]
+        wn2_atm    = result["wn2"][season]["atm"]
+        wn2_hycom  = result["wn2"][season]["hycom"]
+
+        atm_vars   = list(era5_atm.keys())
+        hycom_vars = list(era5_hycom.keys())
+
+        fig, (ax_atm, ax_hycom) = plt.subplots(2, 1, figsize=(10, 7))
+        fig.suptitle(f"IG Attribution — {season}", fontsize=13)
+
+        x_atm = range(len(atm_vars))
+        ax_atm.bar([x - 0.2 for x in x_atm], [era5_atm[v] for v in atm_vars],
+                   width=0.4, label="ERA5", color="steelblue")
+        ax_atm.bar([x + 0.2 for x in x_atm], [wn2_atm[v] for v in atm_vars],
+                   width=0.4, label="WN2", color="tomato")
+        ax_atm.set_xticks(list(x_atm))
+        ax_atm.set_xticklabels(atm_vars, rotation=20, ha="right", fontsize=8)
+        ax_atm.set_ylabel("Mean |IG| attribution")
+        ax_atm.set_title("Atmospheric variables")
+        ax_atm.legend()
+        ax_atm.grid(True, alpha=0.3, axis="y")
+
+        x_hycom = range(len(hycom_vars))
+        ax_hycom.bar([x - 0.2 for x in x_hycom], [era5_hycom[v] for v in hycom_vars],
+                     width=0.4, label="ERA5", color="steelblue")
+        ax_hycom.bar([x + 0.2 for x in x_hycom], [wn2_hycom[v] for v in hycom_vars],
+                     width=0.4, label="WN2", color="tomato")
+        ax_hycom.set_xticks(list(x_hycom))
+        ax_hycom.set_xticklabels(hycom_vars, rotation=15, ha="right", fontsize=9)
+        ax_hycom.set_ylabel("Mean |IG| attribution")
+        ax_hycom.set_title("HYCOM variables")
+        ax_hycom.legend()
+        ax_hycom.grid(True, alpha=0.3, axis="y")
+
+        fig.tight_layout()
+        out_path = Path(out_dir) / f"ig_attribution_{season}.png"
+        fig.savefig(out_path, dpi=120)
+        plt.close(fig)
+        print(f"XAI plot saved -> {out_path}")
+
+
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -338,6 +407,7 @@ def main():
     with open(out_path, "w") as fh:
         json.dump(result, fh, indent=2)
     print(f"XAI comparison saved -> {out_path}")
+    save_attribution_plots(result)
 
 
 if __name__ == "__main__":
