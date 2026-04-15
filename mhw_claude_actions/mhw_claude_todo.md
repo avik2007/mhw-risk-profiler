@@ -4,41 +4,35 @@
 
 ---
 
-## ACTIVE — RESUME HERE NEXT SESSION
+## 3-SESSION DELIVERY PLAN (target: presentable graphics + training evidence)
 
-### GCP Data Pipeline — Execute Plan (Subagent-Driven)
-
-**Current HEAD:** `b8bfb26`
-
-**Plan:** `docs/superpowers/plans/2026-04-10-gcp-data-pipeline.md`
-**Spec:** `docs/superpowers/specs/2026-04-10-gcp-data-pipeline-design.md`
-
-Use `superpowers:subagent-driven-development` to execute the plan task-by-task.
-
-**7 tasks in order:**
-1. `HYCOMLoader.fetch_and_cache()` — TDD, adds to `src/ingestion/harvester.py`
-2. `ERA5Harvester.fetch_and_cache()` — TDD, adds to `src/ingestion/era5_harvester.py`
-3. `_train_utils.py` period alignment — 2022/2023 shared constants, remove ERA5/WN2 pairs
-4. `train_era5.py` GCS-only `load_real_data()` — replaces live OPeNDAP/GEE calls, fixes `ds["threshold"]` bug
-5. `train_wn2.py` GCS-only `load_real_data()` — same pattern, removes `GCS_BUCKET` dependency
-6. `scripts/run_data_prep.py` — idempotent orchestrator for spot GCE VM
-7. `docs/gcp-data-prep-runbook.md` — gcloud VM setup and verification commands
-
-After all tasks pass tests and dry-runs confirm no regressions, the pipeline is ready
-to run on a spot GCE VM (`e2-standard-2`, ~$0.05/run). See runbook for VM setup.
+### Session 1 — GCP pipeline code complete [DONE ✅]
+**HEAD:** `2d37d7e` | 55/55 tests passing | 10 commits
 
 ---
 
-## NEXT (after pipeline implementation)
+### Session 2 — Proxy training run locally → first presentable artifacts [DONE ✅]
+**HEAD:** `89c9ed2` | 55/55 tests passing | 3 commits
 
-### Run data prep job on spot GCE VM
-See `docs/gcp-data-prep-runbook.md` for exact commands.
-Prerequisite: all 7 pipeline tasks complete and tests passing.
+**Artifacts produced:**
+- `data/results/plots/era5_loss_curve.png` — train 122→66, val 105→57 over 30 epochs
+- `data/results/plots/era5_svar_curve.png`, `era5_spread_curve.png`, `era5_gate_hist.png`, `era5_pred_vs_actual.png`
+- `data/results/era5_svar.zarr` — SVaR_95/50/05/spread at lat=3, lon=4 synthetic GoM grid
+- `data/results/xai/ig_attribution_{DJF,MAM,JJA,SON}.png` — 76–77 KB each, SST top var
+- `data/results/xai/xai_comparison.json` — 4 seasons, gate≈0.472
+- `data/models/era5_best_weights.pt` — 2.3 MB
 
-### Real training runs on GCP
-ERA5 and WN2 real runs on GCP (n2-standard-8 or T4 GPU).
-Prerequisite: GCS data prep complete (`hycom/tiles/2022`, `hycom/tiles/2023`,
-`hycom/climatology`, `era5/2022`, `era5/2023` all populated).
+---
+
+### Session 3 — Real data run on spot GCE VM
+**Goal:** Real loss curves + MHW threshold maps on Gulf of Maine grid using 2022 HYCOM+ERA5.
+**Prerequisite:** Session 2 complete. GCS populated via `run_data_prep.py` on `e2-standard-2` (~$0.05/run).
+**See:** `docs/gcp-data-prep-runbook.md` for VM setup commands.
+
+**Expected outputs:**
+- Real `train_era5.py` run on GCS data
+- `data/results/era5_real/loss_curve.png`
+- `data/results/era5_real/mhw_threshold_map.png` — 90th-pct threshold on GoM grid
 
 ---
 

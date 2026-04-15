@@ -4,6 +4,139 @@
 
 ---
 
+## [2026-04-14] GCP Data Pipeline — Session 1 Complete (7 tasks, 10 commits)
+
+### Summary
+Executed `docs/superpowers/plans/2026-04-10-gcp-data-pipeline.md` via subagent-driven development. All 7 tasks shipped. HEAD: `2d37d7e`. 55/55 tests passing. Both dry-runs clean.
+
+### Task 1 — `HYCOMLoader.fetch_and_cache()` (`src/ingestion/harvester.py`)
+- Added `import gcsfs` at module level.
+- Method: idempotent GCS cache check (`gcsfs.GCSFileSystem().exists()`, strips `gs://` prefix via `removeprefix`); on miss calls `self.fetch_tile(f"{year}-01-01", f"{year}-12-31", bbox)` then `ds.to_zarr(gcs_uri, mode="w", consolidated=True)`.
+- Docstring: physical meaning of all params, HYCOM 0–360 longitude convention documented, downstream consumers named (`run_data_prep.py`, `train_era5.py`, `train_wn2.py`). Satisfies CLAUDE.md §4.
+- Tests (`TestHYCOMLoaderFetchAndCache`, `tests/test_harvester_cache.py`): 4 tests — cache hit, cache miss, `gs://` prefix stripping, exception propagation without GCS write.
+- Commits: `1e3bb16`, `90434e0`
+
+### Task 2 — `ERA5Harvester.fetch_and_cache()` (`src/ingestion/era5_harvester.py`)
+- Same pattern as Task 1; adds `_initialized` guard: raises `RuntimeError("Call authenticate() before fetch_and_cache().")` if auth not done.
+- Tests (`TestERA5HarvesterFetchAndCache`): 4 tests — cache hit, cache miss, unauthenticated guard, exception propagation.
+- Total cache tests: 8 across both classes.
+- Commits: `3222eb1`, `a09ba76`
+
+### Task 3 — Period constant alignment (`scripts/_train_utils.py`)
+- Removed `ERA5_TRAIN_PERIOD`, `ERA5_VAL_PERIOD`, `WN2_TRAIN_PERIOD`, `WN2_VAL_PERIOD` and backward-compat aliases.
+- New: `TRAIN_PERIOD = ("2022-01-01", "2022-12-31")`, `VAL_PERIOD = ("2023-01-01", "2023-12-31")`.
+- Comment explains rationale: ERA5 covers 1979–present on GEE; WN2 covers 2022–present; HYCOM GLBy0.08/expt_93.0 through 2024-09-04. Unified period enables apples-to-apples XAI comparison.
+- Both `train_era5.py` and `train_wn2.py` imports updated atomically in same commit.
+- Commit: `aac0f8b`
+
+### Task 4 — GCS-only `load_real_data()` in `train_era5.py`
+- Removed live `ERA5Harvester.fetch()` and `HYCOMLoader.fetch_tile()` calls from `load_real_data()`.
+- Reads from `MHW_GCS_BUCKET` env var via `xr.open_zarr(..., chunks="auto")`.
+- Threshold: `xr.open_zarr(f"{bucket}/hycom/climatology/")["sst_threshold_90"]` — fixes pre-existing bug where key was `"threshold"`.
+- Train: `era5/2022/` + `hycom/tiles/2022/`; Val: `era5/2023/` + `hycom/tiles/2023/`.
+- Raises `RuntimeError` with actionable message if `MHW_GCS_BUCKET` not set.
+- Module docstring updated: "2018/2019" → "2022/2023"; usage block updated to GCS workflow.
+- Dry-run (`--dry-run --epochs 2`) passes — synthetic path unaffected.
+- Commits: `1c21eb2`, `2d37d7e` (docstring fix)
+
+### Task 5 — GCS-only `load_real_data()` in `train_wn2.py`
+- Same pattern as Task 4.
+- WN2 train: `weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr`; Val: `wn2_2023-01-01_2023-12-31_m64.zarr`.
+- HYCOM tiles shared with ERA5 path.
+- Old `GCS_BUCKET` env var replaced with `MHW_GCS_BUCKET`. Threshold key fixed to `"sst_threshold_90"`.
+- Dry-run passes.
+- Commit: `1a3438c`
+
+### Task 6 — `scripts/run_data_prep.py` (new file, 127 lines)
+- Idempotent 5-step orchestrator for spot GCE VM (`e2-standard-2`, ~$0.05–0.09/run).
+- Steps: HYCOM tiles 2022 → HYCOM tiles 2023 → HYCOM climatology → ERA5 tiles 2022 → ERA5 tiles 2023 → WN2 verification.
+- Climatology step reads from GCS (no second OPeNDAP fetch); calls `compute_climatology(sst_all, percentile=90.0)`; writes `sst_threshold_90` to `{bucket}/hycom/climatology/`.
+- Each step guarded by `_gcs_exists()` — skip if already present.
+- Raises `RuntimeError` if `MHW_GCS_BUCKET` not set.
+- Commit: `1d979ff`
+
+### Task 7 — `docs/gcp-data-prep-runbook.md` (new file)
+- 7-section runbook: create spot VM → SSH → env setup → run job → verify outputs → delete VM → run real training.
+- Includes full `gcloud` commands, `conda` env setup, `gcloud compute scp` for credentials, Python verification snippet opening all 5 GCS Zarr paths.
+- Commit: `f55f393`
+
+### Commit log (oldest → newest)
+1. `1e3bb16` feat: add HYCOMLoader.fetch_and_cache() with GCS idempotent caching
+2. `90434e0` fix: improve HYCOMLoader.fetch_and_cache() docstring and add exception propagation test
+3. `3222eb1` feat: add ERA5Harvester.fetch_and_cache() with GCS idempotent caching
+4. `a09ba76` test: add ERA5Harvester.fetch_and_cache() exception propagation test
+5. `aac0f8b` refactor: align ERA5 and WN2 training periods to 2022/2023 shared constants
+6. `1c21eb2` feat: train_era5.py load_real_data() reads from GCS; align to 2022/2023 periods
+7. `1a3438c` feat: train_wn2.py load_real_data() reads from GCS; remove GCS_BUCKET dependency
+8. `1d979ff` feat: add run_data_prep.py — idempotent GCS data prep orchestrator for spot GCE
+9. `f55f393` docs: add GCP data prep runbook for spot GCE VM setup and job execution
+10. `2d37d7e` docs: fix train_era5.py module docstring — update 2018/2019 to 2022/2023
+
+### Next session (Session 2)
+Run `train_era5.py --dry-run` with extended epochs to produce presentable artifacts:
+- `data/results/era5_proxy/loss_curve.png` — train vs. val MSE
+- `data/results/era5_proxy/svar_output.zarr` — SVaR quantiles per grid cell
+- `data/results/xai/ig_attribution_<season>.png` — per-season Captum IG heatmaps
+
+---
+
+## [2026-04-14] Proxy Training Run — Session 2 Complete (3 tasks, 3 commits)
+
+### Summary
+Produced first presentable artifacts from local proxy training run using `train_era5.py --dry-run --epochs 30`. All artifacts confirmed on disk. HEAD: `89c9ed2`. 55/55 tests passing.
+
+### Task S2-T1 — ERA5 proxy training run, 30 epochs
+- Ran `train_era5.py --dry-run --epochs 30` with synthetic 3×4 GoM grid (64 members, seed=42).
+- Training converged: train loss 122 → 66, val loss 105 → 57 over 30 epochs.
+- Artifacts saved under `data/results/plots/`:
+  - `era5_loss_curve.png` — train vs. val MSE per epoch
+  - `era5_svar_curve.png` — SVaR_95/50/05 quantile traces
+  - `era5_spread_curve.png` — ensemble spread over time
+  - `era5_gate_hist.png` — LeakyGate activation histogram
+  - `era5_pred_vs_actual.png` — scatter of predicted vs. actual SDD
+- `data/models/era5_best_weights.pt` saved (2.3 MB).
+- Commit: `110c031`
+
+### Task S2-T2 — Synthetic SVaR in dry-run (`train_era5.py`)
+- `merged_val = None` in dry-run caused `run_svar_inference()` to skip. Fixed by building a synthetic xarray Dataset matching inference expectations:
+  - `pd.date_range("2022-01-01", periods=120, freq="D")`, 3 lats, 4 lons, 64 members, seed=42
+  - HYCOM variables: shape `(M, T, 11, lat, lon)` float32; WN2 variables: `(M, T, lat, lon)` float32 with +280 K offset
+- `data/results/era5_svar.zarr` written: `SVaR_95`, `SVaR_50`, `SVaR_05`, `spread` at each grid cell.
+- Commit: included in `110c031`
+
+### Task S2-T3 — XAI attribution plots (`scripts/compare_xai.py`)
+- Added `save_attribution_plots(result: dict, out_dir: str) -> None` to `compare_xai.py`.
+- Produces one 2-panel bar chart per season (DJF/MAM/JJA/SON): atmospheric variables (top panel, ERA5=steelblue) and HYCOM variables (bottom panel).
+- Docstring explains IG physical meaning: dimensionless normalized gradient × input magnitude; higher = stronger driver of latent risk signal; justifies use as parametric insurance trigger validity evidence.
+- Four PNGs saved to `data/results/xai/`: `ig_attribution_DJF.png`, `ig_attribution_MAM.png`, `ig_attribution_JJA.png`, `ig_attribution_SON.png` — 76–77 KB each. SST confirmed as top variable in all seasons.
+- `data/results/xai/xai_comparison.json` updated: 4 seasons, gate≈0.472.
+- Code quality reviewer flagged missing physical interpretation in docstring; fixed with expanded Notes section.
+- Commits: `22f5732`, `89c9ed2`
+
+### Commit log (oldest → newest)
+1. `110c031` feat: add synthetic SVaR to train_era5.py dry-run; run 30-epoch proxy training
+2. `22f5732` feat: add save_attribution_plots() to compare_xai.py; produce XAI PNGs
+3. `89c9ed2` fix: expand save_attribution_plots() docstring with IG physical interpretation
+
+### Artifacts on disk
+- `data/results/plots/era5_loss_curve.png`
+- `data/results/plots/era5_svar_curve.png`
+- `data/results/plots/era5_spread_curve.png`
+- `data/results/plots/era5_gate_hist.png`
+- `data/results/plots/era5_pred_vs_actual.png`
+- `data/results/era5_svar.zarr`
+- `data/results/xai/ig_attribution_{DJF,MAM,JJA,SON}.png`
+- `data/results/xai/xai_comparison.json`
+- `data/models/era5_best_weights.pt`
+
+### Next session (Session 3)
+Real data run on spot GCE VM (`e2-standard-2`, ~$0.05/run):
+1. `run_data_prep.py` — populate GCS with 2022/2023 HYCOM tiles, climatology, ERA5 tiles
+2. `train_era5.py --epochs 50` with `MHW_GCS_BUCKET` set — real loss curves
+3. `data/results/era5_real/loss_curve.png` + `era5_real/mhw_threshold_map.png`
+
+---
+
 ## [2026-04-10] GCP Data Pipeline — Design + Plan Complete
 
 ### Context

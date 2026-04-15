@@ -9,11 +9,10 @@
 - **Scientific Integrity:** Validate that MHW detection follows Hobday et al. (2016, 2018) and that SDD accumulation accurately reflects biological thresholds for Salmon and Kelp.
 - **Financial Risk:** Ensure SVaR calculations correctly translate ensemble spread into loss exceedance curves for parametric insurance triggers.
 - **Performance Targets:**
-    - **SVaR Accuracy:** Monitor for stability in financial risk estimation.
+    - **Model Performance:** Monitor Mean Squared Error (MSE) across training and validation sets. Ensure the gap between training and validation loss remains narrow to prevent overfitting.
     - **Ensemble Spread:** Benchmark the 64-member WeatherNext 2 distribution to ensure non-Gaussian tail behavior is captured.
-    - **Model Training:** Monitor confusion matrix quantities (Precision, Recall, F1) to ensure robust MHW sequence modeling.
+    - **Regression Accuracy:** Monitor for stability in financial risk estimation and predicted SDD values.
     - **Explainability:** Review XAI (Explainable AI) outputs to ensure model features align with physical oceanographic expectations.
-
 ## Documentation Workflow (Parity with Claude)
 - **Action Logs:** Maintain `mhw_gemini_actions/mhw_gemini_recentactions.md` for session summaries.
 - **Task Tracking:** Update `mhw_gemini_actions/mhw_gemini_todo.md` with high-level review, documentation, and scientific validation tasks.

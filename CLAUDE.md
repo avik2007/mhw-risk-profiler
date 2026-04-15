@@ -131,3 +131,9 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-03-27] zarr v3 installed (satisfies >=2.17); use gs:// URI in to_zarr/open_zarr, not gcsfs.GCSMap
 [2026-03-27] google-cloud-storage and gcsfs missing from requirements.txt — add both
 [2026-04-10] Captum IG with N_MEMBERS=64 and n_steps=50 → effective batch 3200 → ~3.3 GB attention → swap thrash; fix: internal_batch_size=5 in ig.attribute()
+[2026-04-14] xarray ≥2026.x: to_zarr is read-only on instances — use patch("xarray.Dataset.to_zarr") not patch.object(instance, "to_zarr")
+[2026-04-14] gcsfs.exists() requires path WITHOUT gs:// prefix — always strip with removeprefix("gs://") before calling
+[2026-04-14] Threshold Zarr key is "sst_threshold_90" not "threshold" — ds["threshold"] was a latent bug fixed in load_real_data()
+[2026-04-14] Exception propagation test mandatory for GCS write methods: assert fetch exception prevents to_zarr call
+[2026-04-14] Climatology step must read from GCS tiles (not re-fetch OPeNDAP) — saves 1-2 hr on spot VM
+[2026-04-14] Module docstrings go stale when periods change — update in same commit or catch in final review

@@ -19,6 +19,19 @@
 
 ---
 
+## [2026-04-14] GCP Data Pipeline Implementation
+
+- `xarray.Dataset.to_zarr` is read-only on xarray ≥2026.x — `patch.object(instance, "to_zarr")` silently fails. Use `patch("xarray.Dataset.to_zarr")` (class-level patch) for all `to_zarr` mocks. Confirmed working on xarray 2026.2.0.
+- `str.removeprefix("gs://")` requires Python 3.9+. Always add a comment: `# Python 3.9+ — enforced by Dockerfile (python:3.11-slim)` so future readers don't have to audit the Dockerfile.
+- `gcsfs.GCSFileSystem().exists()` expects the path WITHOUT the `gs://` prefix — always strip it before calling. Pattern: `path = gcs_uri.removeprefix("gs://"); fs.exists(path)`.
+- The threshold Zarr variable is named `"sst_threshold_90"` (not `"threshold"`) — `ds["threshold"]` in the old `load_real_data()` was a latent bug that would only surface during a real GCS training run. Fix is in Tasks 4 & 5 (`train_era5.py`, `train_wn2.py`).
+- When adding `fetch_and_cache()` to a class that requires authentication (ERA5Harvester), always add an `_initialized` guard that raises `RuntimeError` with the exact method name to call (`"authenticate()"`). Classes that don't require auth (HYCOMLoader) need no such guard — document the asymmetry in a test comment to prevent future confusion.
+- Exception propagation test is mandatory for any GCS write method: assert that if the upstream fetch raises, `to_zarr` is never called and no partial Zarr is written. This is the key resilience property for spot VM idempotency.
+- The HYCOM climatology step in `run_data_prep.py` must read SST from the already-cached GCS Zarr tiles (not re-fetch OPeNDAP) — otherwise the spot VM pays a second 1–2 hr OPeNDAP fetch. Pattern: write HYCOM tiles first, then open them with `xr.open_zarr()` for the climatology computation.
+- Module-level docstrings in training scripts go stale when period constants change — update them in the same commit that changes the constants, or catch it in final review. `train_era5.py` still said "2018/2019" after Task 3 moved to 2022/2023; required a follow-up commit.
+
+---
+
 ## [2026-04-10] Captum IG + large member dimension causes disk thrashing
 
 - With `N_MEMBERS=64` and Captum's default full-batch IG (`n_steps=50`), the effective Transformer batch is `n_steps × M = 50 × 64 = 3200`. Attention weights `(3200, 8, 90, 90)` consume ~828 MB per layer × 4 layers = ~3.3 GB, exhausting RAM and hammering swap to disk.

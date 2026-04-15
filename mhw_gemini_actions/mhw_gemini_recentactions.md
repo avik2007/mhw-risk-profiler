@@ -1,5 +1,24 @@
 # MHW Gemini Recent Actions
 
+- [2026-04-14] **Review of Proxy Training and XAI (Claude):** Validated Claude's Session 2 artifacts and `scripts/compare_xai.py` implementation.
+    - **Convergence:** Confirmed `train_era5.py` dry-run (30 epochs) achieved significant loss reduction (train: 122→66; val: 105→57), indicating model capacity to learn from synthetic features.
+    - **Artifacts:** Verified generation of diagnostic plots (`loss_curve`, `svar_curve`, `gate_hist`, `pred_vs_actual`) and `era5_svar.zarr` via the new synthetic inference path.
+    - **XAI Physical Interpretation:** Confirmed `save_attribution_plots()` docstring in `compare_xai.py` satisfies CLAUDE.md §4, specifically documenting the physical and financial significance of Integrated Gradients (IG) for all 9 input variables.
+    - **Performance:** Noted `internal_batch_size=5` in IG computation as a critical fix for Transformer attention memory limits (~3.3 GB peak avoidance).
+- [2026-04-14] **Review of GCP Data Pipeline (Claude):** Completed expert evaluation of Claude's Session 1 changes across `src/ingestion/` and `scripts/`.
+    - **Docstrings:** Confirmed `HYCOMLoader.fetch_and_cache()` and `ERA5Harvester.fetch_and_cache()` satisfy CLAUDE.md §4.
+    - **Logic:** Verified `run_data_prep.py` correctly reads from GCS (avoiding second OPeNDAP fetch) and writes `sst_threshold_90` key.
+    - **Consistency:** Confirmed all `xr.open_zarr()` calls use `chunks="auto"`. Removed all outdated constant references (`ERA5_TRAIN_PERIOD`, `WN2_TRAIN_PERIOD`, `GCS_BUCKET`) from `scripts/` and `src/`.
+    - **Validation:** Confirmed 55/55 tests passed. Successfully ran `train_era5.py` and `train_wn2.py` dry-runs; both achieved stable training steps and diagnostic plot generation.
+- [2026-04-10] **Comprehensive Pipeline Evaluation:** Reviewed and validated the completion of the ERA5/WN2 Dual Training Plan.
+    - **Data Ingestion:** Confirmed `harvester.py` and `era5_harvester.py` correctly handle HYCOM vertical interpolation (Hybrid Coordinate to Z-level) and GEE ImageCollection sampling.
+    - **Training Infrastructure:** Validated `_train_utils.py` and `train_era5.py` implementation of the SETS framework, specifically the physics-based SDD labels and SVaR quantile estimation (95/50/05).
+    - **Explainable AI (XAI):** Reviewed `compare_xai.py` implementation of **Integrated Gradients (IG)**. Confirmed use of `internal_batch_size=5` to manage Transformer attention memory (preventing ~3.3 GB peak RAM spikes) and targeting of the latent fusion layer for attribution.
+- [2026-04-10] **Scientific & Financial Review of Payout Logic:**
+    - **Attribution Analysis:** Formulated a rigorous definition of attribution (Axiom of Completeness) as a "differential accounting" of model signal versus baseline.
+    - **Payout Structure Research:** Verified that the **Piecewise Linear Payout Function** (Attachment, Cap, Linear Proportional Payout) is an industry-standard practice for 2024-2026 aquaculture insurance.
+    - **Source Verification:** Cited UNEP Finance Initiative, Willis/Rare partnership, AXA Climate, and Bozec et al. (2025, *Nature Communications*) as the foundational research for using environmental indices (SDD/DHW) as automatic parametric triggers.
+- [2026-04-10] **Project Plan Update:** Identified immediate next actions for the "Pre-WeatherNext Analytics" phase: implementing `src/analytics/payout.py` (Parametric Payout Engine) and `scripts/compute_hycom_climatology.py` (90th-percentile Threshold Generation).
 - [2026-04-02] Created `GEMINI.md` with role mandates, scientific targets (SVaR, ensemble spread, confusion matrix, XAI), and technical constraints.
 - [2026-04-02] Initialized `mhw_gemini_actions/` directory with tracking files.
 - [2026-04-02] Conducted expert ML review of `src/models/`: validated 1D-CNN depth-profile encoder, Transformer temporal context, and LeakyGate fusion architecture.
