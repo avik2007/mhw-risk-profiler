@@ -58,9 +58,15 @@ BBOX  = (-71.0, 41.0, -66.0, 45.0)
 YEARS = (2022, 2023)
 
 
-def _gcs_exists(fs: gcsfs.GCSFileSystem, gcs_uri: str) -> bool:
-    """Return True if gcs_uri exists, stripping gs:// prefix for gcsfs."""
-    return fs.exists(gcs_uri.removeprefix("gs://"))  # Python 3.9+ — enforced by Dockerfile (python:3.11-slim)
+def _gcs_complete(fs: gcsfs.GCSFileSystem, gcs_uri: str) -> bool:
+    """Return True only if gcs_uri contains a complete consolidated Zarr store.
+
+    Checks for .zmetadata, which to_zarr(consolidated=True) writes last.
+    A directory with only partial chunk files (mid-write preemption) returns
+    False, preventing corrupt stores from passing the idempotency check.
+    """
+    meta = gcs_uri.removeprefix("gs://").rstrip("/") + "/.zmetadata"
+    return fs.exists(meta)  # Python 3.9+ removeprefix — enforced by Dockerfile (python:3.11-slim)
 
 
 def main() -> None:
@@ -85,7 +91,7 @@ def main() -> None:
     # Computes 90th-percentile SST per (dayofyear, lat, lon) over 2022/2023.
     clim_uri = f"{bucket}/hycom/climatology/"
     print(f"[3/5] HYCOM climatology -> {clim_uri}", flush=True)
-    if not _gcs_exists(fs, clim_uri):
+    if not _gcs_complete(fs, clim_uri):
         sst_years = []
         for year in YEARS:
             tile_uri = f"{bucket}/hycom/tiles/{year}/"

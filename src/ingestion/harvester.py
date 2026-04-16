@@ -44,6 +44,27 @@ from scipy.interpolate import RegularGridInterpolator
 
 logger = logging.getLogger(__name__)
 
+
+def _gcs_complete(fs: gcsfs.GCSFileSystem, gcs_uri: str) -> bool:
+    """Return True only if gcs_uri contains a complete, consolidated Zarr store.
+
+    Uses the presence of .zmetadata as the completeness marker.  This file is
+    written *last* by ``to_zarr(consolidated=True)``, so a directory that only
+    contains partial chunk files (e.g. from a mid-write preemption) returns
+    False and will be overwritten on the next run.
+
+    Parameters
+    ----------
+    fs : gcsfs.GCSFileSystem
+        Authenticated GCS filesystem instance.
+    gcs_uri : str
+        GCS URI of the Zarr store, e.g. "gs://bucket/hycom/tiles/2022/".
+        The leading "gs://" prefix and any trailing slash are stripped before
+        the existence check, matching gcsfs path conventions.
+    """
+    meta = gcs_uri.removeprefix("gs://").rstrip("/") + "/.zmetadata"
+    return fs.exists(meta)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -562,6 +583,13 @@ class HYCOMLoader:
         """
         Fetch one full calendar year of HYCOM data and write to GCS as Zarr.
 
+        Data is fetched month-by-month to limit preemption exposure.  Each month
+        is written to an intermediate Zarr at ``{gcs_uri}monthly/m{MM}/`` before
+        the 12 monthly stores are concatenated into the final annual store at
+        ``gcs_uri``.  Both levels use ``_gcs_complete`` (checks for ``.zmetadata``)
+        as the idempotency marker, so a partial write from a preempted spot VM is
+        never treated as a cache hit.
+
         Parameters
         ----------
         year : int
@@ -573,32 +601,58 @@ class HYCOMLoader:
             0–360 longitude internally; fetch_tile() handles the conversion transparently.
             Source: project-standard Gulf of Maine region, e.g. (-71.0, 41.0, -66.0, 45.0).
         gcs_uri : str
-            GCS destination, e.g. "gs://bucket/hycom/tiles/2022/".
-            If the URI already exists, returns immediately — idempotent, safe to re-run
-            after a spot VM preemption.
+            GCS destination for the annual tile, e.g. "gs://bucket/hycom/tiles/2022/".
+            Monthly intermediates are written to "gs://bucket/hycom/tiles/2022/monthly/mMM/".
+            If the annual store is already complete (.zmetadata present), returns immediately.
+            If some monthly stores are already complete, those months are skipped.
 
         Side effects
         ------------
-        Writes a Zarr store to gcs_uri with dims (time, depth, lat, lon)
+        Writes monthly Zarr stores at ``{gcs_uri}monthly/m{MM}/`` (12 stores) and a
+        consolidated annual Zarr at ``gcs_uri``, all with dims (time, depth, lat, lon)
         and variables: water_temp [°C], salinity [psu], water_u [m/s], water_v [m/s].
-        This Zarr store is the canonical HYCOM input tile for the MHW detection and SVaR
-        analytics pipeline for this year/region; it is read by run_data_prep.py and
-        train_era5.py / train_wn2.py via xr.open_zarr().
+        This annual Zarr store is the canonical HYCOM input tile for the MHW detection and
+        SVaR analytics pipeline; it is read by run_data_prep.py, train_era5.py, and
+        train_wn2.py via xr.open_zarr().
         Credentials are read from GOOGLE_APPLICATION_CREDENTIALS automatically by gcsfs.
         """
+        import calendar
+
         fs = gcsfs.GCSFileSystem()
-        path = gcs_uri.removeprefix("gs://")  # Python 3.9+ — enforced by Dockerfile (python:3.11-slim)
-        if fs.exists(path):
+        if _gcs_complete(fs, gcs_uri):
             logger.info("Cache hit — skipping HYCOM fetch for %d: %s", year, gcs_uri)
             return
 
-        start_date = f"{year}-01-01"
-        end_date   = f"{year}-12-31"
-        logger.info("Fetching HYCOM year %d (%s to %s)...", year, start_date, end_date)
+        base = gcs_uri.rstrip("/")
+        month_uris: list[str] = []
 
-        ds = self.fetch_tile(start_date, end_date, bbox)
-        ds.to_zarr(gcs_uri, mode="w", consolidated=True)
-        logger.info("HYCOM year %d written to %s", year, gcs_uri)
+        for month in range(1, 13):
+            _, last_day = calendar.monthrange(year, month)
+            start_date = f"{year}-{month:02d}-01"
+            end_date   = f"{year}-{month:02d}-{last_day:02d}"
+            month_uri  = f"{base}/monthly/m{month:02d}/"
+
+            if not _gcs_complete(fs, month_uri):
+                logger.info(
+                    "Fetching HYCOM %d-%02d (%s to %s)...", year, month, start_date, end_date
+                )
+                ds_month = self.fetch_tile(start_date, end_date, bbox)
+                ds_month.to_zarr(month_uri, mode="w", consolidated=True)
+                logger.info("HYCOM %d-%02d written to %s", year, month, month_uri)
+            else:
+                logger.info("Cache hit — HYCOM %d-%02d: %s", year, month, month_uri)
+
+            month_uris.append(month_uri)
+
+        # Concatenate all 12 monthly stores into the annual tile.
+        # Monthly data is already on GCS; xr.open_zarr reads lazily so the concat
+        # and subsequent to_zarr stream data through the VM in Dask chunks rather
+        # than loading the full year into memory at once.
+        logger.info("Concatenating 12 monthly HYCOM tiles for year %d...", year)
+        monthly_datasets = [xr.open_zarr(uri, chunks="auto") for uri in month_uris]
+        ds_annual = xr.concat(monthly_datasets, dim="time")
+        ds_annual.to_zarr(gcs_uri, mode="w", consolidated=True)
+        logger.info("HYCOM year %d annual store written to %s", year, gcs_uri)
 
     def _interpolate_to_standard_depths(self, ds: xr.Dataset) -> xr.Dataset:
         """

@@ -24,15 +24,45 @@
 
 ---
 
-### Session 3 — Real data run on spot GCE VM
+### Session 3 — Real data run on spot GCE VM [IN PROGRESS]
 **Goal:** Real loss curves + MHW threshold maps on Gulf of Maine grid using 2022 HYCOM+ERA5.
-**Prerequisite:** Session 2 complete. GCS populated via `run_data_prep.py` on `e2-standard-2` (~$0.05/run).
+**Prerequisite:** Session 2 complete ✅. Pipeline bugs fixed (Session 4). GCS still empty — need to run `run_data_prep.py` to completion.
 **See:** `docs/gcp-data-prep-runbook.md` for VM setup commands.
 
-**Expected outputs:**
+**Pipeline fixes (Session 4, 58/58 tests):**
+- `.zmetadata`-based idempotency in `HYCOMLoader.fetch_and_cache()`, `ERA5Harvester.fetch_and_cache()`, `run_data_prep.py`
+- HYCOM fetched month-by-month (12 × ~20 min chunks) — preemption resilient
+- ERA5 `filterDate` off-by-one fixed (Dec 31 now included)
+
+**To restart VM:**
+```bash
+gcloud compute instances start mhw-data-prep --zone=us-central1-a
+gcloud compute ssh mhw-data-prep --zone=us-central1-a
+# tmux new -s dataprep
+# conda run -n mhw-risk python scripts/run_data_prep.py 2>&1 | tee data_prep.log
+```
+
+**Expected outputs (after job completes):**
 - Real `train_era5.py` run on GCS data
 - `data/results/era5_real/loss_curve.png`
 - `data/results/era5_real/mhw_threshold_map.png` — 90th-pct threshold on GoM grid
+
+---
+
+### Session 4 — WeatherNext 2 real data run
+**Goal:** Real WN2 loss curves + XAI comparison against ERA5 Session 3 results.
+**Prerequisite:** Session 3 ERA5 real run complete and loss curves validated.
+
+**Code tasks before running:**
+1. `WeatherNext2Harvester.fetch_ensemble()` — implement 00Z init filter (`start_time` ends in `T00:00:00Z`) + `forecast_hour=24` filter. Yields 365 × 64 images/year matching ERA5 structure. See `docs/superpowers/specs/wn2_asset_schema.txt`.
+2. `scripts/run_data_prep.py` — WN2 step currently only verifies GEE access; extend it to fetch and write `weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr` and `wn2_2023-01-01_2023-12-31_m64.zarr` to GCS.
+3. Re-run `run_data_prep.py` on spot GCE VM to populate WN2 GCS tiles.
+4. Run `train_wn2.py --epochs 50` with `MHW_GCS_BUCKET` set.
+5. Run `compare_xai.py` on both real ERA5 + WN2 results — produces final XAI comparison.
+
+**Expected outputs:**
+- `data/results/wn2_real/loss_curve.png`
+- `data/results/xai/xai_comparison_real.json` — ERA5 vs WN2 IG attribution, all 4 seasons
 
 ---
 

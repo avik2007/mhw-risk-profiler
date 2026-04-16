@@ -4,6 +4,87 @@
 
 ---
 
+## [2026-04-15] Session 4 — run_data_prep.py pipeline hardening (3 bugs fixed)
+
+### Context
+Spot VM `mhw-data-prep` found TERMINATED (preempted again); GCS `gs://mhw-risk-cache/` empty.
+Diagnosed three root causes and fixed all before restarting.
+
+### Bug fixes committed
+
+**Bug 1 — Partial-write false cache hit (`harvester.py`, `era5_harvester.py`, `run_data_prep.py`)**
+Both `HYCOMLoader.fetch_and_cache()` and `ERA5Harvester.fetch_and_cache()` checked path existence
+with `gcsfs.exists(dir_path)`, which returns True as soon as any chunk file is written. A mid-write
+preemption left an incomplete Zarr store that passed the idempotency check on restart, silently
+producing corrupt data. Fix: check for `.zmetadata` (written *last* by `to_zarr(consolidated=True)`)
+as the completeness marker. Added `_gcs_complete()` module-level helper in `harvester.py`;
+`run_data_prep.py` `_gcs_exists()` renamed `_gcs_complete()` with same fix.
+
+**Bug 2 — Annual HYCOM fetch atomicity (`harvester.py`)**
+`HYCOMLoader.fetch_and_cache()` fetched a full calendar year in one OPeNDAP call + one to_zarr
+write. A preemption mid-write lost all progress. Fix: iterate month-by-month, writing 12
+intermediate Zarrs at `{gcs_uri}monthly/mMM/` (each with its own `.zmetadata` idempotency check),
+then concatenate lazily and write the annual tile. Max preemption loss: ~20-30 min per month
+instead of 3+ hours for the full year. Partial resumption tested (months 1-6 done → only 7-12 fetched).
+
+**Bug 3 — ERA5 `filterDate` off-by-one (`era5_harvester.py`)**
+GEE `filterDate(start, end)` treats `end` as exclusive. Passing `end_date = "2022-12-31"` silently
+omitted Dec 31 from every ERA5 year. Fix: `end_date = f"{year + 1}-01-01"`.
+
+### Test suite
+58/58 tests passing. Added 3 new HYCOM tests (zmetadata check, partial resume, 12-month coverage);
+updated ERA5 cache-hit path assertion and end-date expectation.
+
+### Commit
+See git log for commit hash.
+
+### To restart the job
+```bash
+gcloud compute instances start mhw-data-prep --zone=us-central1-a
+gcloud compute ssh mhw-data-prep --zone=us-central1-a
+# then: tmux new -s dataprep
+# conda run -n mhw-risk python scripts/run_data_prep.py 2>&1 | tee data_prep.log
+```
+
+---
+
+## [2026-04-15] Session 3 — run_data_prep.py restarted on spot GCE VM
+
+### Context
+Spot VM `mhw-data-prep` (us-central1-a, **e2-standard-4**, 16 GB — resized from e2-standard-2 to fix OOM kill)
+was preempted overnight. GCS was empty. VM restarted and resized. Bucket name was also corrected
+(was `mhw-data-cache` which was wrong — correct name in `mondal-mhw-gcp-info.md`).
+
+### Active job (as of 2026-04-15 evening)
+- **tmux session:** `dataprep` on VM `mhw-data-prep`
+- **Command running:** `conda run -n mhw-risk python scripts/run_data_prep.py 2>&1 | tee data_prep.log`
+- **Log file on VM:** `~/mhw-risk-profiler/data_prep.log`
+- **Status:** Running — log not yet producing output (early in HYCOM OPeNDAP fetch)
+- **Estimated runtime:** 3–5 hours from job start
+
+### To reconnect
+```bash
+gcloud compute ssh mhw-data-prep --zone=us-central1-a
+tmux attach -t dataprep
+```
+
+### To check progress without SSH
+```bash
+gcloud compute ssh mhw-data-prep --zone=us-central1-a -- "tail -20 ~/mhw-risk-profiler/data_prep.log"
+```
+
+### GCS verification (run after job completes)
+```bash
+for path in hycom/tiles/2022 hycom/tiles/2023 hycom/climatology era5/2022 era5/2023; do
+  gcloud storage ls gs://mhw-data-cache/$path/ 2>/dev/null && echo "$path: OK" || echo "$path: MISSING"
+done
+```
+
+### Next step after completion
+`train_era5.py --epochs 50` with `MHW_GCS_BUCKET=gs://mhw-data-cache` (Session 3 goal).
+
+---
+
 ## [2026-04-14] GCP Data Pipeline — Session 1 Complete (7 tasks, 10 commits)
 
 ### Summary

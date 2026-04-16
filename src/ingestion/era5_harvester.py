@@ -222,13 +222,14 @@ class ERA5Harvester:
             raise RuntimeError("Call authenticate() before fetch_and_cache().")
 
         fs = gcsfs.GCSFileSystem()
-        path = gcs_uri.removeprefix("gs://")  # Python 3.9+ — enforced by Dockerfile (python:3.11-slim)
-        if fs.exists(path):
+        meta = gcs_uri.removeprefix("gs://").rstrip("/") + "/.zmetadata"
+        if fs.exists(meta):
             logger.info("Cache hit — skipping ERA5 fetch for %d: %s", year, gcs_uri)
             return
 
         start_date = f"{year}-01-01"
-        end_date   = f"{year}-12-31"
+        # GEE filterDate end is exclusive — use Jan 1 of the next year to include Dec 31.
+        end_date   = f"{year + 1}-01-01"
         logger.info("Fetching ERA5 year %d (%s to %s)...", year, start_date, end_date)
 
         ds = self.fetch(start_date, end_date, bbox)
