@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import date as _date, timedelta
 from typing import Optional
 
 import gcsfs
@@ -38,14 +39,14 @@ logger = logging.getLogger(__name__)
 # Mapping: ERA5 band name → WN2-compatible variable name
 # Source for band names: GEE catalog — ECMWF/ERA5/DAILY
 ERA5_BANDS: dict[str, str] = {
-    "mean_2m_air_temperature":    "2m_temperature",
+    "temperature_2m":              "2m_temperature",
     "u_component_of_wind_10m":    "10m_u_component_of_wind",
     "v_component_of_wind_10m":    "10m_v_component_of_wind",
     "mean_sea_level_pressure":    "mean_sea_level_pressure",
     "sea_surface_temperature":    "sea_surface_temperature",
 }
 
-GEE_COLLECTION = "ECMWF/ERA5/DAILY"
+GEE_COLLECTION = "ECMWF/ERA5/HOURLY"
 
 
 class ERA5Harvester:
@@ -99,7 +100,8 @@ class ERA5Harvester:
         bbox: tuple[float, float, float, float],
     ) -> xr.Dataset:
         """
-        Query ECMWF/ERA5/DAILY from GEE for the specified date range and bounding box.
+        Query ECMWF/ERA5/HOURLY from GEE for the specified date range and bounding box,
+        aggregating 24 hourly images per calendar day to a daily mean server-side.
 
         Parameters
         ----------
@@ -144,22 +146,31 @@ class ERA5Harvester:
                 "Check GEE asset availability for this period."
             )
 
-        logger.info("ERA5: %d daily images found.", n_images)
+        logger.info("ERA5 hourly: %d images found, aggregating to daily means.", n_images)
 
-        image_list = collection.sort("system:time_start").toList(n_images)
+        # Build calendar-day list. end_date is exclusive (GEE filterDate convention).
+        start_d = _date.fromisoformat(start_date)
+        end_d   = _date.fromisoformat(end_date)
+        unique_dates = []
+        d = start_d
+        while d < end_d:
+            unique_dates.append(d)
+            d += timedelta(days=1)
+
         time_coords: list = []
         data_by_var: dict[str, list] = {band: [] for band in ERA5_BANDS}
 
-        for t_idx in range(n_images):
-            img = ee.Image(image_list.get(t_idx))
-            sample = img.sampleRectangle(
-                region=region, defaultValue=0
-            ).getInfo()
+        for i, d in enumerate(unique_dates):
+            date_str      = d.isoformat()
+            next_date_str = (d + timedelta(days=1)).isoformat()
+            # Average 24 hourly images into one daily mean image server-side.
+            daily_img = collection.filterDate(date_str, next_date_str).mean()
+            sample = daily_img.sampleRectangle(region=region, defaultValue=0).getInfo()
             props = sample["properties"]
             for band in ERA5_BANDS:
                 data_by_var[band].append(np.array(props[band]))  # (lat, lon)
-            date_str = img.date().format("YYYY-MM-dd").getInfo()
             time_coords.append(np.datetime64(date_str))
+            logger.info("ERA5 fetched %s (%d/%d)", date_str, i + 1, len(unique_dates))
 
         # Stack into (time, lat, lon) arrays, then rename and add member dim
         ds_vars = {}
