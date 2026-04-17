@@ -407,6 +407,8 @@ class WeatherNext2Harvester:
             member coordinate: integer 0 … n_members-1
             time coordinate: one np.datetime64 per calendar day
         """
+        import time as _time
+
         target_bands = list(WN2_VARIABLES)
 
         # Get all unique calendar dates covered by the filtered collection.
@@ -428,16 +430,21 @@ class WeatherNext2Harvester:
 
         for i, date_str in enumerate(unique_dates):
             d = _date.fromisoformat(date_str)
+            next_date_str = (d + timedelta(days=1)).isoformat()
             # system:index format: "{YYYYMMDDHHMM}_{YYYYMMDDHHMM}_{member_int}"
             # start_compact = init time at 00Z, end_compact = 24h later at 00Z.
             start_compact = d.strftime("%Y%m%d0000")
             end_compact   = (d + timedelta(days=1)).strftime("%Y%m%d0000")
 
-            # Sort members numerically (ensemble_member is a string "0"–"63").
-            # A derived integer property avoids lexicographic ordering ("10" < "2").
+            # Query the asset directly with a 1-day date filter rather than
+            # filtering the year-level collection. This gives GEE a computation
+            # graph of ~64 images instead of ~23,360, avoiding server-side
+            # timeout on the sampleRectangle call.
             day_coll = (
-                collection
-                .filter(ee.Filter.stringStartsWith("start_time", date_str))
+                ee.ImageCollection(WN2_GEE_ASSET)
+                .filter(ee.Filter.date(date_str, next_date_str))
+                .filter(ee.Filter.stringEndsWith("start_time", "T00:00:00Z"))
+                .filter(ee.Filter.eq("forecast_hour", 24))
                 .map(lambda img: img.set(
                     "member_int",
                     ee.Number.parse(img.getString("ensemble_member"))
@@ -449,7 +456,21 @@ class WeatherNext2Harvester:
             # Merge all member images into one multi-band image and extract pixels.
             # Band names: "{start_compact}_{end_compact}_{member_int}_{var}"
             combined = day_coll.select(target_bands).toBands()
-            sample = combined.sampleRectangle(region=region, defaultValue=0).getInfo()
+
+            # Retry up to 3 times with 60 s backoff — GEE sampleRectangle is
+            # occasionally slow even for small images.
+            for attempt in range(3):
+                try:
+                    sample = combined.sampleRectangle(region=region, defaultValue=0).getInfo()
+                    break
+                except Exception as exc:
+                    if attempt == 2:
+                        raise
+                    logger.warning(
+                        "sampleRectangle failed for %s (attempt %d/3): %s — retrying in 60s",
+                        date_str, attempt + 1, exc,
+                    )
+                    _time.sleep(60)
             props = sample["properties"]
 
             # Derive lat/lon coordinates from the first day's pixel grid.
