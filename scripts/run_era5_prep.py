@@ -47,9 +47,8 @@ def main() -> None:
     if not bucket:
         raise RuntimeError("MHW_GCS_BUCKET env var not set.")
 
-    era5 = ERA5Harvester(
-        service_account_key=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
-    )
+    era5 = ERA5Harvester()
+    era5.authenticate()
 
     for step, year in enumerate(YEARS, start=1):
         gcs_uri = f"{bucket}/era5/{year}/"
