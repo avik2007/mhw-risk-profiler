@@ -4,6 +4,54 @@
 
 ---
 
+## [2026-04-17] Session 7 — WN2 infrastructure complete, second VM running, both data preps active
+
+### Context
+Continuing from Session 6. All code work completed this session; both VMs launched and running.
+
+### WN2 infrastructure (Tasks W1 + W2) — COMPLETE
+- `WeatherNext2Harvester.fetch_and_cache()` and `_build_dataset()` implemented in `harvester.py`
+- `run_data_prep.py` extended with WN2 steps 6 & 7
+- `run_wn2_prep.py` written as standalone script for parallel VM execution
+- 68/68 tests passing (21 new: `test_wn2_harvester.py` + updated `test_harvester_cache.py`)
+
+### zarr v3 + gcsfs bug fix — `_gcs_safe_write()`
+- Root cause: zarr v3 calls `delete_dir()` unconditionally in `mode="w"` even on
+  non-existent GCS paths; gcsfs raises OSError 404.
+- Fix: `_gcs_safe_write()` helper in `harvester.py` — clears with `fs.exists()`/`fs.rm()`
+  then writes with `mode="a"` (no `delete_dir` call). Used by all GCS write paths.
+- ERA5 and WN2 tests updated to mock `_gcs_safe_write` directly.
+
+### WN2 SST bug found and fixed
+- WN2 `sea_surface_temperature` band is land-masked — ~25% of GoM bbox pixels return
+  `defaultValue=0` (0 K, physically impossible). Diagnosed via `reduceRegion` vs
+  `sampleRectangle` comparison: real SST range 275–291 K over ocean only.
+- Fix: removed `sea_surface_temperature` from `WN2_VARIABLES`. WN2 now provides 4
+  atmospheric variables only (2m_temp, u/v wind, MSLP). HYCOM remains authoritative SST.
+- `NOISE_SIGMAS` SST entry retained — still valid for ERA5 `expand_and_perturb()`.
+
+### WN2 smoke test — PASSED
+- `scripts/wn2_smoke_test.py`: 3-day fetch (Jan 1-3 2022), 64 members, GCS write + read-back.
+- Output confirmed: `(member=64, time=3, latitude=17, longitude=21)`, 4 variables, no SST.
+- ~9 sec/day fetch rate → ~55 min/year for full 365-day run.
+
+### Second VM: `mhw-wn2-prep`
+- Snapshot `mhw-wn2-snap` taken from `mhw-data-prep` boot disk (conda env + credentials preserved).
+- VM created: e2-standard-4, us-central1-a, on-demand, from snapshot.
+- `run_wn2_prep.py` running at PID 964, logging to `~/nohup_wn2_prep.log`.
+- GEE confirmed: 23,360 images found for 2022 (365 days × 64 members), fetching in progress.
+
+### run_data_prep.py job restart (mhw-data-prep)
+- Previous launch used `conda run` which doesn't survive SSH detachment.
+- Restarted with `nohup env ... /path/to/python run_data_prep.py >> log 2>&1 </dev/null & disown $!`
+- PID 4883, confirmed alive, fetching HYCOM 2022-01 as of session end.
+
+### LinkedIn post decision
+- Post will use real ERA5 + HYCOM results only. Synthetic ensemble noise on ERA5 inputs
+  is acceptable for training; "no synthetic data" rule applies to published results.
+
+---
+
 ## [2026-04-16] Session 6 — On-demand VM, job running, hourly GCS monitor active
 
 ### Context
