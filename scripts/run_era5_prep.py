@@ -48,8 +48,6 @@ def main() -> None:
         raise RuntimeError("MHW_GCS_BUCKET env var not set.")
 
     era5 = ERA5Harvester(
-        gcs_bucket=bucket.removeprefix("gs://"),
-        gcs_prefix="era5",
         service_account_key=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
     )
 
