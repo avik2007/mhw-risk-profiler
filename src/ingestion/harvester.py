@@ -356,7 +356,7 @@ class WeatherNext2Harvester:
         )
 
         logger.info("Fetching WeatherNext 2 for year %d -> %s", year, gcs_uri)
-        ds = self._build_dataset(collection, region, n_members)
+        ds = self._build_dataset(collection, region, n_members, gcs_uri)
 
         if self._key:
             os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", self._key)
@@ -368,6 +368,7 @@ class WeatherNext2Harvester:
         collection,
         region,
         n_members: int,
+        gcs_uri: str,
     ) -> xr.Dataset:
         """
         Fetch WeatherNext 2 pixel values from a pre-filtered ImageCollection and
@@ -398,6 +399,9 @@ class WeatherNext2Harvester:
             Spatial extent for pixel extraction.
         n_members : int
             Number of ensemble members per day.
+        gcs_uri : str
+            GCS URI of the final annual Zarr store (e.g. gs://bucket/wn2_2022.zarr).
+            Per-day intermediates are written to {gcs_uri}_daily/d{YYYYMMDD}/.
 
         Returns
         -------
@@ -423,12 +427,23 @@ class WeatherNext2Harvester:
         logger.info("WN2 collection covers %d days, %d total images",
                     len(unique_dates), len(all_start_times))
 
-        data_by_var: dict[str, list] = {var: [] for var in target_bands}
-        time_coords: list = []
+        fs = gcsfs.GCSFileSystem()
+        daily_base = gcs_uri.rstrip("/") + "_daily"
+        datasets: list = []
         lat_coords: Optional[np.ndarray] = None
         lon_coords: Optional[np.ndarray] = None
 
         for i, date_str in enumerate(unique_dates):
+            day_uri = f"{daily_base}/d{date_str.replace('-', '')}/"
+            if _gcs_complete(fs, day_uri):
+                ds_day = xr.open_zarr(day_uri, chunks={})
+                if lat_coords is None:
+                    lat_coords = ds_day["latitude"].values
+                    lon_coords = ds_day["longitude"].values
+                datasets.append(ds_day)
+                logger.info("WN2 cache hit: %s (%d/%d)", date_str, i + 1, len(unique_dates))
+                continue
+
             d = _date.fromisoformat(date_str)
             next_date_str = (d + timedelta(days=1)).isoformat()
             # system:index format: "{YYYYMMDDHHMM}_{YYYYMMDDHHMM}_{member_int}"
@@ -457,20 +472,20 @@ class WeatherNext2Harvester:
             # Band names: "{start_compact}_{end_compact}_{member_int}_{var}"
             combined = day_coll.select(target_bands).toBands()
 
-            # Retry up to 3 times with 60 s backoff — GEE sampleRectangle is
-            # occasionally slow even for small images.
-            for attempt in range(3):
+            # Retry up to 5 times with exponential backoff (60, 120, 240, 480 s).
+            for attempt in range(5):
                 try:
                     sample = combined.sampleRectangle(region=region, defaultValue=0).getInfo()
                     break
                 except Exception as exc:
-                    if attempt == 2:
+                    if attempt == 4:
                         raise
+                    wait = 60 * (2 ** attempt)
                     logger.warning(
-                        "sampleRectangle failed for %s (attempt %d/3): %s — retrying in 60s",
-                        date_str, attempt + 1, exc,
+                        "sampleRectangle failed for %s (attempt %d/5): %s — retrying in %ds",
+                        date_str, attempt + 1, exc, wait,
                     )
-                    _time.sleep(60)
+                    _time.sleep(wait)
             props = sample["properties"]
 
             # Derive lat/lon coordinates from the first day's pixel grid.
@@ -482,31 +497,29 @@ class WeatherNext2Harvester:
                 lon_coords = np.linspace(bounds[0][0], bounds[2][0], n_lon)
                 lat_coords = np.linspace(bounds[0][1], bounds[2][1], n_lat)
 
+            data_vars_day = {}
             for var in target_bands:
                 member_arrays = [
                     np.array(props[f"{start_compact}_{end_compact}_{m}_{var}"])
                     for m in range(n_members)
                 ]
-                data_by_var[var].append(member_arrays)  # (n_members, n_lat, n_lon)
+                arr = np.array(member_arrays, dtype=np.float32)  # (n_members, n_lat, n_lon)
+                data_vars_day[var] = (["member", "latitude", "longitude"], arr)
 
-            time_coords.append(np.datetime64(date_str))
+            ds_day = xr.Dataset(
+                data_vars_day,
+                coords={
+                    "member":    np.arange(n_members),
+                    "latitude":  lat_coords,
+                    "longitude": lon_coords,
+                },
+            ).expand_dims({"time": [np.datetime64(date_str)]})
+
+            _gcs_safe_write(ds_day, day_uri)
+            datasets.append(ds_day)
             logger.info("WN2 fetched %s (%d/%d)", date_str, i + 1, len(unique_dates))
 
-        data_vars = {}
-        for var, time_list in data_by_var.items():
-            arr = np.array(time_list, dtype=np.float32)  # (time, n_members, n_lat, n_lon)
-            arr = np.transpose(arr, (1, 0, 2, 3))         # (member, time, n_lat, n_lon)
-            data_vars[var] = (["member", "time", "latitude", "longitude"], arr)
-
-        return xr.Dataset(
-            data_vars,
-            coords={
-                "member":    np.arange(n_members),
-                "time":      time_coords,
-                "latitude":  lat_coords,
-                "longitude": lon_coords,
-            },
-        )
+        return xr.concat(datasets, dim="time")
 
     def _fetch_and_write_zarr(
         self,
