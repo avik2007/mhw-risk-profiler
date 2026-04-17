@@ -68,3 +68,18 @@ Suppressing them from version control would hide the reasoning chain behind
 model architecture and threshold choices. Only checkpoint directories are ignored.
 
 ---
+## [2026-04-16] conda run does not survive SSH session detachment
+
+**Lesson:** `conda run -n <env> python script.py` spawns a subprocess tree managed by conda.
+When the SSH session closes, the entire process group is killed regardless of `nohup` or `&`.
+
+**Fix:** Use the conda env's Python binary directly:
+```bash
+nohup /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/run_data_prep.py \
+  >> data_prep.log 2>&1 </dev/null &
+disown $!
+```
+Set env vars inline before the command. `disown` ensures the shell releases the process
+before the SSH session closes.
+
+---

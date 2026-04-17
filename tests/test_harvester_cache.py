@@ -161,12 +161,12 @@ class TestERA5HarvesterFetchAndCache:
 
         with patch("src.ingestion.era5_harvester.gcsfs.GCSFileSystem") as mock_fs_cls, \
              patch.object(harvester, "fetch", return_value=fake_ds) as mock_fetch, \
-             patch("xarray.Dataset.to_zarr") as mock_to_zarr:
+             patch("src.ingestion.era5_harvester._gcs_safe_write") as mock_write:
             mock_fs_cls.return_value.exists.return_value = False
             harvester.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/era5/2022/")
             # end_date must be "2023-01-01" so GEE filterDate (exclusive end) includes Dec 31
             mock_fetch.assert_called_once_with("2022-01-01", "2023-01-01", (-71.0, 41.0, -66.0, 45.0))
-            mock_to_zarr.assert_called_once_with("gs://bucket/era5/2022/", mode="w", consolidated=True)
+            mock_write.assert_called_once_with(fake_ds, "gs://bucket/era5/2022/")
 
     def test_raises_if_not_authenticated(self):
         """fetch_and_cache() raises RuntimeError if authenticate() was not called."""

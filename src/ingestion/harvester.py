@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import date as _date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -42,7 +43,44 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
+try:
+    import ee
+except ImportError:  # earthengine-api not installed in non-GEE environments
+    ee = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+
+def _gcs_safe_write(ds: xr.Dataset, gcs_uri: str, consolidated: bool = True) -> None:
+    """Write an xr.Dataset to a GCS Zarr store, handling zarr v3 + gcsfs incompatibility.
+
+    zarr v3 calls ``delete_dir()`` unconditionally when opening with ``mode="w"``,
+    even if the target path has never been written to.  On GCS, gcsfs raises
+    OSError 404 for a delete on a non-existent path, crashing the write before
+    any data is transferred.
+
+    This helper works around the issue by:
+      1. Manually deleting existing content with gcsfs (guarded by ``fs.exists``
+         so a non-existent path is silently ignored).
+      2. Writing with ``mode="a"`` (append/create-if-absent), which does NOT call
+         ``delete_dir()``, producing an identical result to ``mode="w"`` on a
+         freshly cleared path.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset to write.
+    gcs_uri : str
+        GCS destination URI, e.g. "gs://bucket/hycom/tiles/2022/".
+    consolidated : bool
+        Whether to write consolidated .zmetadata (default True).
+        Must be True for _gcs_complete() idempotency checks to work.
+    """
+    fs = gcsfs.GCSFileSystem()
+    path = gcs_uri.removeprefix("gs://").rstrip("/")
+    if fs.exists(path):
+        fs.rm(path, recursive=True)
+    ds.to_zarr(gcs_uri, mode="a", consolidated=consolidated)
 
 
 def _gcs_complete(fs: gcsfs.GCSFileSystem, gcs_uri: str) -> bool:
@@ -166,7 +204,6 @@ class WeatherNext2Harvester:
         self._gcs_prefix = gcs_prefix
         self._key = service_account_key
         self._ee_initialized = False
-        self._gcs_client = None
 
     def authenticate(self) -> None:
         """
@@ -177,10 +214,6 @@ class WeatherNext2Harvester:
 
         This method is idempotent — safe to call multiple times.
         """
-        import ee
-        from google.cloud import storage
-        from google.oauth2 import service_account
-
         if not self._ee_initialized:
             if self._key:
                 import json
@@ -190,17 +223,11 @@ class WeatherNext2Harvester:
                     email=_key_data["client_email"], key_file=self._key
                 )
                 ee.Initialize(credentials=credentials)
-                gcs_creds = service_account.Credentials.from_service_account_file(
-                    self._key,
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                )
-                self._gcs_client = storage.Client(credentials=gcs_creds)
             else:
                 # Application Default Credentials — standard in Cloud Run / Vertex AI
                 ee.Initialize()
-                self._gcs_client = storage.Client()
             self._ee_initialized = True
-            logger.info("GEE and GCS authentication successful.")
+            logger.info("GEE authentication successful.")
 
     def fetch_ensemble(
         self,
@@ -216,9 +243,10 @@ class WeatherNext2Harvester:
         Parameters
         ----------
         start_date : str
-            ISO 8601 start date, e.g. "2023-06-01".
+            ISO 8601 start date, e.g. "2022-01-01".
         end_date : str
-            ISO 8601 end date, inclusive, e.g. "2023-08-31".
+            ISO 8601 end date, EXCLUSIVE (GEE filterDate convention), e.g. "2023-01-01"
+            to include all of 2022. Pass year+1-01-01 to cover a full calendar year.
         bbox : tuple of float
             (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84.
             Defines the spatial region of interest — typically an aquaculture lease
@@ -239,27 +267,26 @@ class WeatherNext2Harvester:
             each member represents a plausible atmospheric trajectory, and the
             spread across members quantifies forecast uncertainty.
         """
-        import ee
-
         if not self._ee_initialized:
             raise RuntimeError("Call authenticate() before fetch_ensemble().")
 
         lon_min, lat_min, lon_max, lat_max = bbox
         region = ee.Geometry.Rectangle([lon_min, lat_min, lon_max, lat_max])
-        date_filter = ee.Filter.date(start_date, end_date)
 
         logger.info(
             "Querying WeatherNext 2: %s to %s, bbox=%s, members=%d",
             start_date, end_date, bbox, n_members,
         )
 
-        # Filter to complete-ensemble images only (number_of_members == 64).
-        # The collection always stores all 64 members per image; we select a subset
-        # of member bands after filtering, NOT filter by member count.
+        # WN2 structure: each image = one member × one init_time × one forecast_hour.
+        # Filter to 00Z initialization only (one forecast per calendar day) and
+        # forecast_hour=24 (next-day forecast), yielding 365 × 64 images per year.
+        # ee.Filter.date acts on system:time_start (Unix ms of init window start).
         collection = (
             ee.ImageCollection(WN2_GEE_ASSET)
-            .filter(date_filter)
-            .filter(ee.Filter.eq("number_of_members", 64))
+            .filter(ee.Filter.date(start_date, end_date))
+            .filter(ee.Filter.stringEndsWith("start_time", "T00:00:00Z"))
+            .filter(ee.Filter.eq("forecast_hour", 24))
         )
 
         zarr_uri = self._fetch_and_write_zarr(
@@ -270,6 +297,195 @@ class WeatherNext2Harvester:
         logger.info("WeatherNext 2 dataset loaded: %s", ds)
         return ds
 
+    def fetch_and_cache(
+        self,
+        year: int,
+        bbox: tuple[float, float, float, float],
+        gcs_uri: str,
+        n_members: int = 64,
+    ) -> None:
+        """
+        Fetch one full calendar year of WeatherNext 2 data and write to GCS as Zarr.
+
+        Authenticates lazily (idempotent — safe to call even if authenticate() was
+        already invoked). Uses .zmetadata as the completeness marker so partial writes
+        from a failed run are never treated as a cache hit.
+
+        Parameters
+        ----------
+        year : int
+            Calendar year to fetch (Jan 1 – Dec 31).
+            Coverage: 2022-01-01 to present (WN2 starts 2022-01-01).
+        bbox : tuple of float
+            (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84.
+            Must be ≤ 5°×5° for the sampleRectangle compute path (GoM standard
+            bbox of (-71.0, 41.0, -66.0, 45.0) satisfies this at 5°×4°).
+        gcs_uri : str
+            GCS destination for the annual Zarr store.
+            Convention: "gs://<bucket>/weathernext2/cache/wn2_{year}-01-01_{year}-12-31_m{n}.zarr"
+            If the store is already complete (.zmetadata present), returns immediately.
+        n_members : int
+            Number of ensemble members to retrieve (1–64). Default 64 for production SVaR.
+
+        Side effects
+        ------------
+        Writes a consolidated Zarr store at gcs_uri with dims (member, time, latitude, longitude)
+        and variables: sea_surface_temperature [K], 2m_temperature [K],
+        10m_u_component_of_wind [m/s], 10m_v_component_of_wind [m/s],
+        mean_sea_level_pressure [Pa].
+        """
+        if not self._ee_initialized:
+            self.authenticate()
+
+        fs = gcsfs.GCSFileSystem()
+        if _gcs_complete(fs, gcs_uri):
+            logger.info("Cache hit — skipping WN2 fetch for %d: %s", year, gcs_uri)
+            return
+
+        lon_min, lat_min, lon_max, lat_max = bbox
+        region = ee.Geometry.Rectangle([lon_min, lat_min, lon_max, lat_max])
+
+        # end_date is exclusive in GEE filterDate — use Jan 1 of next year to
+        # include all of Dec 31. Same fix applied to ERA5Harvester.fetch_and_cache().
+        collection = (
+            ee.ImageCollection(WN2_GEE_ASSET)
+            .filter(ee.Filter.date(f"{year}-01-01", f"{year + 1}-01-01"))
+            .filter(ee.Filter.stringEndsWith("start_time", "T00:00:00Z"))
+            .filter(ee.Filter.eq("forecast_hour", 24))
+        )
+
+        logger.info("Fetching WeatherNext 2 for year %d -> %s", year, gcs_uri)
+        ds = self._build_dataset(collection, region, n_members)
+
+        if self._key:
+            os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", self._key)
+        _gcs_safe_write(ds, gcs_uri)
+        logger.info("WN2 year %d Zarr written to %s", year, gcs_uri)
+
+    def _build_dataset(
+        self,
+        collection,
+        region,
+        n_members: int,
+    ) -> xr.Dataset:
+        """
+        Fetch WeatherNext 2 pixel values from a pre-filtered ImageCollection and
+        assemble them into an xr.Dataset with dims (member, time, latitude, longitude).
+
+        Uses GEE's synchronous sampleRectangle compute path. One API call is made
+        per calendar day: all n_members images for that day are merged with toBands()
+        into a single image (n_members × 5 bands), then sampleRectangle extracts the
+        full spatial grid in one round trip. For 365 days this yields ~365 GEE calls.
+
+        WN2 native resolution is 0.25° (~27,830 m). For the GoM bbox (5°×4°) the
+        pixel grid is 21×17 = 357 pixels per band. The 320-band combined image
+        (64 members × 5 variables) returns ~114,240 float values per call — well
+        within GEE's sampleRectangle limits.
+
+        Band naming after toBands():  "{system:index}_{band_name}"
+        where system:index = "{start_compact}_{end_compact}_{member_int}"
+        and member_int is the integer member ID (0–63).
+        Members are sorted numerically via a derived 'member_int' property before
+        toBands(), so band index 0 = member 0, index 1 = member 1, etc.
+
+        Parameters
+        ----------
+        collection : ee.ImageCollection
+            WN2 collection already filtered to 00Z init, forecast_hour=24, and the
+            target date range. Expected size: 365 × n_members images per year.
+        region : ee.Geometry
+            Spatial extent for pixel extraction.
+        n_members : int
+            Number of ensemble members per day.
+
+        Returns
+        -------
+        ds : xr.Dataset
+            Dimensions: (member, time, latitude, longitude)
+            Variables: WN2_VARIABLES [K, K, m/s, m/s, Pa]
+            member coordinate: integer 0 … n_members-1
+            time coordinate: one np.datetime64 per calendar day
+        """
+        target_bands = list(WN2_VARIABLES)
+
+        # Get all unique calendar dates covered by the filtered collection.
+        # start_time format: "2022-01-01T00:00:00Z" — take the date part only.
+        all_start_times = collection.aggregate_array("start_time").getInfo()
+        if not all_start_times:
+            raise RuntimeError(
+                "WeatherNext 2 collection is empty after filtering. "
+                "Check date range, 00Z filter, and forecast_hour=24 filter."
+            )
+        unique_dates = sorted({st[:10] for st in all_start_times})
+        logger.info("WN2 collection covers %d days, %d total images",
+                    len(unique_dates), len(all_start_times))
+
+        data_by_var: dict[str, list] = {var: [] for var in target_bands}
+        time_coords: list = []
+        lat_coords: Optional[np.ndarray] = None
+        lon_coords: Optional[np.ndarray] = None
+
+        for i, date_str in enumerate(unique_dates):
+            d = _date.fromisoformat(date_str)
+            # system:index format: "{YYYYMMDDHHMM}_{YYYYMMDDHHMM}_{member_int}"
+            # start_compact = init time at 00Z, end_compact = 24h later at 00Z.
+            start_compact = d.strftime("%Y%m%d0000")
+            end_compact   = (d + timedelta(days=1)).strftime("%Y%m%d0000")
+
+            # Sort members numerically (ensemble_member is a string "0"–"63").
+            # A derived integer property avoids lexicographic ordering ("10" < "2").
+            day_coll = (
+                collection
+                .filter(ee.Filter.stringStartsWith("start_time", date_str))
+                .map(lambda img: img.set(
+                    "member_int",
+                    ee.Number.parse(img.getString("ensemble_member"))
+                ))
+                .sort("member_int")
+                .limit(n_members)
+            )
+
+            # Merge all member images into one multi-band image and extract pixels.
+            # Band names: "{start_compact}_{end_compact}_{member_int}_{var}"
+            combined = day_coll.select(target_bands).toBands()
+            sample = combined.sampleRectangle(region=region, defaultValue=0).getInfo()
+            props = sample["properties"]
+
+            # Derive lat/lon coordinates from the first day's pixel grid.
+            if lat_coords is None:
+                first_key = f"{start_compact}_{end_compact}_0_{target_bands[0]}"
+                first_arr = np.array(props[first_key])  # (n_lat, n_lon)
+                n_lat, n_lon = first_arr.shape
+                bounds = region.bounds().getInfo()["coordinates"][0]
+                lon_coords = np.linspace(bounds[0][0], bounds[2][0], n_lon)
+                lat_coords = np.linspace(bounds[0][1], bounds[2][1], n_lat)
+
+            for var in target_bands:
+                member_arrays = [
+                    np.array(props[f"{start_compact}_{end_compact}_{m}_{var}"])
+                    for m in range(n_members)
+                ]
+                data_by_var[var].append(member_arrays)  # (n_members, n_lat, n_lon)
+
+            time_coords.append(np.datetime64(date_str))
+            logger.info("WN2 fetched %s (%d/%d)", date_str, i + 1, len(unique_dates))
+
+        data_vars = {}
+        for var, time_list in data_by_var.items():
+            arr = np.array(time_list, dtype=np.float32)  # (time, n_members, n_lat, n_lon)
+            arr = np.transpose(arr, (1, 0, 2, 3))         # (member, time, n_lat, n_lon)
+            data_vars[var] = (["member", "time", "latitude", "longitude"], arr)
+
+        return xr.Dataset(
+            data_vars,
+            coords={
+                "member":    np.arange(n_members),
+                "time":      time_coords,
+                "latitude":  lat_coords,
+                "longitude": lon_coords,
+            },
+        )
+
     def _fetch_and_write_zarr(
         self,
         collection,
@@ -279,147 +495,46 @@ class WeatherNext2Harvester:
         n_members: int,
     ) -> str:
         """
-        Compute WeatherNext 2 pixel values for a spatial region, build an xr.Dataset,
-        and write it to GCS as a consolidated Zarr store.
+        Build an xr.Dataset from a filtered WN2 ImageCollection and write it to GCS.
 
-        Uses the GEE synchronous compute path (`sampleRectangle`) rather than
-        asynchronous batch Export. This is appropriate for small regions (≤ 5°×5°)
-        and avoids the 2–20 minute GEE task queue. For large-area production runs
-        the batch export path with GeoTIFF conversion is required.
+        This is the internal cache layer for fetch_ensemble(). The GCS URI is derived
+        deterministically from start_date, end_date, and n_members so that repeated
+        calls with the same arguments are idempotent.
+
+        Uses _gcs_complete() (.zmetadata check) as the cache sentinel — a partial
+        write from a failed run is never treated as a cache hit.
 
         Parameters
         ----------
         collection : ee.ImageCollection
-            WeatherNext 2 collection filtered to the target date range.
-            Each image in the collection represents one forecast timestep and
-            contains all 64 ensemble members as separate band groups.
+            WN2 collection filtered to the target date range, 00Z init, fh=24.
         region : ee.Geometry
-            Spatial extent for pixel extraction (must be small for compute path).
+            Spatial extent for sampleRectangle pixel extraction.
         start_date, end_date : str
-            ISO 8601 dates used to construct a deterministic GCS cache key.
+            ISO 8601 dates used to build the deterministic GCS cache key.
+            end_date should be exclusive (e.g. "2023-01-01" for full 2022).
         n_members : int
-            Number of ensemble members to extract from the full 64-member set.
+            Number of ensemble members to extract.
 
         Returns
         -------
         gcs_uri : str
-            GCS URI of the written Zarr store: "gs://<bucket>/<prefix>/<key>.zarr"
+            GCS URI of the written (or pre-existing) Zarr store.
         """
-        import ee
-        import json
-
         store_key = f"{self._gcs_prefix}/wn2_{start_date}_{end_date}_m{n_members}.zarr"
         gcs_uri = f"gs://{self._gcs_bucket}/{store_key}"
 
-        # Cache check: if the store already exists skip re-fetching
-        bucket = self._gcs_client.bucket(self._gcs_bucket)
-        if any(bucket.list_blobs(prefix=store_key)):
+        fs = gcsfs.GCSFileSystem()
+        if _gcs_complete(fs, gcs_uri):
             logger.info("Cache hit for WeatherNext 2 Zarr: %s", gcs_uri)
             return gcs_uri
 
-        logger.info("Fetching WeatherNext 2 via compute path (sampleRectangle).")
-
-        # Inspect the first image to discover band naming convention.
-        # WeatherNext 2 encodes each variable × member combination as a separate
-        # band, typically named "{variable}_member_{i}" or "{variable}_{i:02d}".
-        first_image = ee.Image(collection.first())
-        band_names = first_image.bandNames().getInfo()
-        logger.info("WeatherNext 2 band names (first image): %s", band_names)
-
-        # Build a mapping: for each WN2_VARIABLE, find the bands for members 0…n_members-1.
-        # Accepts two common naming patterns used by GEE public weather datasets:
-        #   Pattern A: "{variable}_member_{i}"  (e.g. "sea_surface_temperature_member_0")
-        #   Pattern B: "{variable}_{i:02d}"     (e.g. "sea_surface_temperature_00")
-        member_bands: dict[str, list[str]] = {}
-        for var in WN2_VARIABLES:
-            matched: list[str] = []
-            for m in range(n_members):
-                for band in [
-                    f"{var}_member_{m}",
-                    f"{var}_{m:02d}",
-                    f"{var}_{m}",
-                ]:
-                    if band in band_names:
-                        matched.append(band)
-                        break
-                else:
-                    # Fall back: treat the variable name itself as a single-member band
-                    if var in band_names and m == 0:
-                        matched.append(var)
-            if matched:
-                member_bands[var] = matched
-
-        if not member_bands:
-            raise RuntimeError(
-                f"Could not match WN2_VARIABLES to bands in the collection. "
-                f"Available bands: {band_names}"
-            )
-
-        # Iterate over each image (one timestep) and extract pixel values
-        n_images = collection.size().getInfo()
-        image_list = collection.toList(n_images)
-
-        # Collect arrays per variable: list of (n_lat, n_lon) arrays per (member, time)
-        time_coords: list = []
-        data_by_var: dict[str, list] = {var: [] for var in member_bands}
-
-        for t_idx in range(n_images):
-            img = ee.Image(image_list.get(t_idx))
-            # Extract all required bands in one call
-            all_bands = [b for bands in member_bands.values() for b in bands]
-            sample = img.select(all_bands).sampleRectangle(
-                region=region, defaultValue=0
-            ).getInfo()
-
-            props = sample["properties"]
-            for var, bands in member_bands.items():
-                # Each band's pixel grid is a list-of-lists (lat × lon)
-                member_arrays = [np.array(props[b]) for b in bands]
-                data_by_var[var].append(member_arrays)  # (n_members, lat, lon)
-
-            # Capture the image date
-            date_str = img.date().format("YYYY-MM-dd").getInfo()
-            time_coords.append(np.datetime64(date_str))
-
-        # Assemble into an xr.Dataset: dims = (member, time, latitude, longitude)
-        # Use the pixel grid from the first variable/member to infer spatial coords.
-        first_var = next(iter(data_by_var))
-        first_grid = np.array(data_by_var[first_var][0][0])  # (lat, lon)
-        n_lat, n_lon = first_grid.shape
-        lon_min_v, lat_min_v, lon_max_v, lat_max_v = (
-            region.bounds().getInfo()["coordinates"][0][0][0],
-            region.bounds().getInfo()["coordinates"][0][0][1],
-            region.bounds().getInfo()["coordinates"][0][2][0],
-            region.bounds().getInfo()["coordinates"][0][2][1],
-        )
-        lat_coords = np.linspace(lat_min_v, lat_max_v, n_lat)
-        lon_coords = np.linspace(lon_min_v, lon_max_v, n_lon)
-
-        data_vars = {}
-        for var, time_list in data_by_var.items():
-            # time_list: list of length n_images, each element: list of n_members arrays (lat, lon)
-            arr = np.array(time_list)  # (time, member, lat, lon)
-            arr = np.transpose(arr, (1, 0, 2, 3))  # (member, time, lat, lon)
-            data_vars[var] = (["member", "time", "latitude", "longitude"], arr)
-
-        ds = xr.Dataset(
-            data_vars,
-            coords={
-                "member": np.arange(n_members),
-                "time": time_coords,
-                "latitude": lat_coords,
-                "longitude": lon_coords,
-            },
-        )
-
-        # Write to GCS via the direct gs:// URI.
-        # gcsfs (registered as an fsspec backend) resolves credentials from
-        # GOOGLE_APPLICATION_CREDENTIALS automatically, so no manual token
-        # construction is needed. This is compatible with zarr v2 and v3.
-        logger.info("Writing WeatherNext 2 Dataset to GCS Zarr: %s", gcs_uri)
+        logger.info("Fetching WeatherNext 2 via sampleRectangle compute path.")
         if self._key:
             os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", self._key)
-        ds.to_zarr(gcs_uri, mode="w", consolidated=True)
+
+        ds = self._build_dataset(collection, region, n_members)
+        _gcs_safe_write(ds, gcs_uri)
         logger.info("WeatherNext 2 Zarr written: %s", gcs_uri)
 
         return gcs_uri
@@ -637,7 +752,7 @@ class HYCOMLoader:
                     "Fetching HYCOM %d-%02d (%s to %s)...", year, month, start_date, end_date
                 )
                 ds_month = self.fetch_tile(start_date, end_date, bbox)
-                ds_month.to_zarr(month_uri, mode="w", consolidated=True)
+                _gcs_safe_write(ds_month, month_uri)
                 logger.info("HYCOM %d-%02d written to %s", year, month, month_uri)
             else:
                 logger.info("Cache hit — HYCOM %d-%02d: %s", year, month, month_uri)
@@ -651,7 +766,7 @@ class HYCOMLoader:
         logger.info("Concatenating 12 monthly HYCOM tiles for year %d...", year)
         monthly_datasets = [xr.open_zarr(uri, chunks="auto") for uri in month_uris]
         ds_annual = xr.concat(monthly_datasets, dim="time")
-        ds_annual.to_zarr(gcs_uri, mode="w", consolidated=True)
+        _gcs_safe_write(ds_annual, gcs_uri)
         logger.info("HYCOM year %d annual store written to %s", year, gcs_uri)
 
     def _interpolate_to_standard_depths(self, ds: xr.Dataset) -> xr.Dataset:

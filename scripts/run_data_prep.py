@@ -19,17 +19,17 @@ Usage:
     python scripts/run_data_prep.py
 
 Expected output:
-    [1/5] HYCOM tiles 2022 -> gs://bucket/hycom/tiles/2022/  OK
-    [2/5] HYCOM tiles 2023 -> gs://bucket/hycom/tiles/2023/  OK
-    [3/5] HYCOM climatology -> gs://bucket/hycom/climatology/  OK
-    [4/5] ERA5 tiles 2022 -> gs://bucket/era5/2022/  OK
-    [5/5] ERA5 tiles 2023 -> gs://bucket/era5/2023/  OK
-    [WN2] gs://bucket/weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr  OK
-    [WN2] gs://bucket/weathernext2/cache/wn2_2023-01-01_2023-12-31_m64.zarr  OK
+    [1/7] HYCOM tiles 2022 -> gs://bucket/hycom/tiles/2022/  OK
+    [2/7] HYCOM tiles 2023 -> gs://bucket/hycom/tiles/2023/  OK
+    [3/7] HYCOM climatology -> gs://bucket/hycom/climatology/  OK
+    [4/7] ERA5 tiles 2022 -> gs://bucket/era5/2022/  OK
+    [5/7] ERA5 tiles 2023 -> gs://bucket/era5/2023/  OK
+    [6/7] WN2 tiles 2022 -> gs://bucket/weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr  OK
+    [7/7] WN2 tiles 2023 -> gs://bucket/weathernext2/cache/wn2_2023-01-01_2023-12-31_m64.zarr  OK
     Data prep complete.
 
-Total estimated runtime: 3-5 hours on a spot e2-standard-2 (mostly OPeNDAP network I/O).
-Estimated cost: ~$0.05-0.09 on spot e2-standard-2 at $0.017/hr.
+Total estimated runtime: 4-7 hours on e2-standard-4 (OPeNDAP + GEE sampleRectangle).
+Estimated cost: ~$0.19/hr on-demand e2-standard-4.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ import xarray as xr
 
 from src.analytics.mhw_detection import compute_climatology
 from src.ingestion.era5_harvester import ERA5Harvester
-from src.ingestion.harvester import HYCOMLoader
+from src.ingestion.harvester import HYCOMLoader, WeatherNext2Harvester, _gcs_safe_write
 
 logging.basicConfig(
     level=logging.INFO,
@@ -101,7 +101,7 @@ def main() -> None:
             sst_years.append(sst)
         sst_all   = xr.concat(sst_years, dim="time")  # (time=730, lat, lon)
         threshold = compute_climatology(sst_all, percentile=90.0)
-        threshold.to_dataset(name="sst_threshold_90").to_zarr(clim_uri, mode="w")
+        _gcs_safe_write(threshold.to_dataset(name="sst_threshold_90"), clim_uri)
         logger.info("HYCOM climatology written to %s", clim_uri)
     else:
         logger.info("Cache hit — skipping climatology: %s", clim_uri)
@@ -117,14 +117,19 @@ def main() -> None:
         era5.fetch_and_cache(year, BBOX, gcs_uri)
         print(f"[{step}/5] ERA5 tiles {year}  OK", flush=True)
 
-    # ---- WN2 verification ----
-    # WN2 is fetched separately by WeatherNext2Harvester.fetch_ensemble() (existing behavior).
-    # This step only checks that expected cache paths exist and warns if not.
-    for year in YEARS:
-        wn2_path = f"{bucket}/weathernext2/cache/wn2_{year}-01-01_{year}-12-31_m64.zarr"
-        exists = _gcs_exists(fs, wn2_path)
-        status = "OK" if exists else "WARNING — not found; run WeatherNext2Harvester.fetch_ensemble() for this year"
-        print(f"[WN2] {wn2_path}  {status}", flush=True)
+    # ---- Steps 6 & 7: WeatherNext 2 annual tiles ----
+    # GEE sampleRectangle compute path: ~365 API calls per year (~30-90 min/year).
+    # authenticate() is called once inside fetch_and_cache (lazy, idempotent).
+    wn2 = WeatherNext2Harvester(
+        gcs_bucket=bucket.removeprefix("gs://"),
+        gcs_prefix="weathernext2/cache",
+        service_account_key=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+    )
+    for step, year in enumerate(YEARS, start=6):
+        gcs_uri = f"{bucket}/weathernext2/cache/wn2_{year}-01-01_{year}-12-31_m64.zarr"
+        print(f"[{step}/7] WN2 tiles {year} -> {gcs_uri}", flush=True)
+        wn2.fetch_and_cache(year, BBOX, gcs_uri)
+        print(f"[{step}/7] WN2 tiles {year}  OK", flush=True)
 
     print("Data prep complete.", flush=True)
 

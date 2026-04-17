@@ -4,6 +4,99 @@
 
 ---
 
+## [2026-04-16] Session 6 — On-demand VM, job running, hourly GCS monitor active
+
+### Context
+VM `mhw-data-prep` was preempted again (3rd time at same HYCOM 2022-01 fetch point).
+Decision: switch from SPOT provisioning to on-demand to eliminate preemption entirely.
+
+### CLAUDE.md updates
+- Created global `~/.claude/CLAUDE.md` with four behavioral principles:
+  Think Before Coding, Simplicity First, Surgical Changes, Define Success.
+  Also includes a "Consulting the User" trigger list and Coding Standards section.
+- Added §6 (No Assumptions), §7 (Simplicity First / Surgical Changes), §8 (Tests-First)
+  to project-level `CLAUDE.md` with mhw-specific callouts on scientific choices.
+
+### VM migration: SPOT → on-demand
+- `gcloud compute instances set-disk-auto-delete mhw-data-prep --no-auto-delete`
+  — disabled auto-delete on boot disk before VM deletion.
+- `gcloud compute instances delete mhw-data-prep --zone=us-central1-a --quiet`
+  — deleted the spot VM; boot disk retained (50 GB, READY).
+- `gcloud compute instances create mhw-data-prep --machine-type=e2-standard-4 --disk=name=mhw-data-prep,boot=yes,auto-delete=yes --no-preemptible --scopes=cloud-platform`
+  — new on-demand VM created from existing boot disk. No PREEMPTIBLE flag confirmed.
+- All prior setup (conda, mhw-risk env, .bashrc env vars, service account key) preserved
+  on the boot disk — no re-setup required.
+
+### Job launch fix: conda run → direct Python
+- `conda run` does not survive SSH session detachment (process killed on disconnect).
+- Fix: use the env's Python binary directly with env vars set inline:
+  ```bash
+  MHW_GCS_BUCKET=gs://mhw-risk-cache \
+  GOOGLE_APPLICATION_CREDENTIALS=/home/avik2007/.config/gcp-keys/mhw-harvester.json \
+  nohup /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/run_data_prep.py \
+  >> data_prep.log 2>&1 </dev/null &
+  disown $!
+  ```
+- PID 1323 confirmed alive; log shows HYCOM 2022-01 OPeNDAP fetch in progress.
+
+### Hourly GCS monitor
+- Cron job `d489cf43` scheduled at `:07` past every hour (session-only, auto-expires 7 days).
+- Checks `.zmetadata` for all 5 paths; reports status each hour; stops and notifies user
+  when all 5 are complete.
+- Cancel with: `CronDelete d489cf43`
+
+### To reconnect manually
+```bash
+gcloud compute ssh mhw-data-prep --zone=us-central1-a -- "tail -30 ~/mhw-risk-profiler/data_prep.log"
+```
+
+### GCS verification (run after job completes)
+```bash
+for path in hycom/tiles/2022 hycom/tiles/2023 hycom/climatology era5/2022 era5/2023; do
+  gcloud storage ls gs://mhw-risk-cache/$path/.zmetadata 2>/dev/null && echo "$path: OK" || echo "$path: MISSING"
+done
+```
+
+### Next step after completion
+`train_era5.py --epochs 50` with `MHW_GCS_BUCKET=gs://mhw-risk-cache`
+
+### Lesson recorded
+`conda run` does not survive SSH session detachment — always use the env's Python binary
+directly (`/home/avik2007/miniconda3/envs/mhw-risk/bin/python`) with `nohup` + `disown`.
+
+---
+
+## [2026-04-16] Session 5 — VM restart, env vars persisted, run_data_prep.py running
+
+### Context
+VM was preempted again. SSH failed with IAP error 4003 (backend not running). Restarted VM.
+`data_prep.log` existed but was 0 bytes — script had never successfully run in prior sessions
+due to two missing env vars.
+
+### Root causes fixed
+
+**1 — `MHW_GCS_BUCKET` was never set**
+Script raised `RuntimeError: MHW_GCS_BUCKET env var not set` immediately. Correct bucket URI
+identified (see `mondal-mhw-gcp-info.md`).
+
+**2 — `GOOGLE_APPLICATION_CREDENTIALS` tilde not expanding**
+`export GOOGLE_APPLICATION_CREDENTIALS="~/.config/gcp-keys/mhw-harvester.json"` passes a
+literal `~` to Python; fixed to `"$HOME/.config/gcp-keys/mhw-harvester.json"`.
+
+**3 — Conda not in PATH on VM**
+`conda` was installed under `~/miniconda3/` but not initialized. Fixed with:
+`/home/avik2007/miniconda3/bin/conda init bash` → modifies `~/.bashrc`.
+
+### Persisted to `~/.bashrc` on VM
+Both env vars and conda init are now in `~/.bashrc` — no manual setup needed after future
+VM restarts or preemptions.
+
+### Status
+`run_data_prep.py` started and logging. HYCOM 2022-01 fetch confirmed in log. Job running
+in tmux session `data_prep`.
+
+---
+
 ## [2026-04-15] Session 4 — run_data_prep.py pipeline hardening (3 bugs fixed)
 
 ### Context

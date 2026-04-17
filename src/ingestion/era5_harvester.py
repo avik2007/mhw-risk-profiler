@@ -31,6 +31,8 @@ import gcsfs
 import numpy as np
 import xarray as xr
 
+from src.ingestion.harvester import _gcs_safe_write
+
 logger = logging.getLogger(__name__)
 
 # Mapping: ERA5 band name → WN2-compatible variable name
@@ -233,5 +235,5 @@ class ERA5Harvester:
         logger.info("Fetching ERA5 year %d (%s to %s)...", year, start_date, end_date)
 
         ds = self.fetch(start_date, end_date, bbox)
-        ds.to_zarr(gcs_uri, mode="w", consolidated=True)
+        _gcs_safe_write(ds, gcs_uri)
         logger.info("ERA5 year %d written to %s", year, gcs_uri)

@@ -81,6 +81,20 @@ committing to the current branch) may proceed automatically under an approved pl
 - Acceptable evidence: test output, assertion pass, printed shape/values, or saved artefact path.
 - "It should work" is not verification. Run it.
 
+### 6. No Assumptions — Consult Before Deciding
+- Before making any assumption about requirements, data schema, model behavior, or system state, stop and ask.
+- When a decision involves a tradeoff, surface the options explicitly and wait for a decision. Do not pick silently.
+- This applies especially to scientific/physical choices (thresholds, aggregation windows, interpolation methods) — do not default to a plausible value without flagging it.
+
+### 7. Simplicity First / Surgical Changes
+- Always propose the simplest solution that correctly satisfies the requirement.
+- When modifying code, touch only the lines required. No reformatting, no refactoring adjacent code, no unsolicited improvements.
+- If the simplest and "architecturally proper" solutions diverge, flag it and ask.
+
+### 8. Tests-First / Verifiable Success Criteria
+- Before writing implementation, define explicit success criteria and write or identify tests for them.
+- No feature is complete until the defined tests pass and the criteria are verified with evidence.
+
 ---
 
 ## Repository Layout
@@ -137,3 +151,4 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-04-14] Exception propagation test mandatory for GCS write methods: assert fetch exception prevents to_zarr call
 [2026-04-14] Climatology step must read from GCS tiles (not re-fetch OPeNDAP) — saves 1-2 hr on spot VM
 [2026-04-14] Module docstrings go stale when periods change — update in same commit or catch in final review
+[2026-04-16] conda run does not survive SSH session detachment — use env Python directly: /home/avik2007/miniconda3/envs/mhw-risk/bin/python + nohup + disown $!
