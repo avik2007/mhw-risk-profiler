@@ -53,7 +53,12 @@ except ImportError:  # earthengine-api not installed in non-GEE environments
 logger = logging.getLogger(__name__)
 
 
-def _gcs_safe_write(ds: xr.Dataset, gcs_uri: str, consolidated: bool = True) -> None:
+def _gcs_safe_write(
+    ds: xr.Dataset,
+    gcs_uri: str,
+    consolidated: bool = True,
+    preserve_dirs: tuple[str, ...] = (),
+) -> None:
     """Write an xr.Dataset to a GCS Zarr store, handling zarr v3 + gcsfs incompatibility.
 
     zarr v3 calls ``delete_dir()`` unconditionally when opening with ``mode="w"``,
@@ -83,18 +88,33 @@ def _gcs_safe_write(ds: xr.Dataset, gcs_uri: str, consolidated: bool = True) -> 
         GCS destination URI, e.g. "gs://bucket/hycom/tiles/2022/".
     consolidated : bool
         Whether to write consolidated metadata (default True).
+    preserve_dirs : tuple of str
+        Top-level subdirectory names inside ``gcs_uri`` to skip when clearing the
+        store before writing.  Use ``preserve_dirs=("monthly",)`` when writing an
+        annual tile so that per-month intermediate stores nested under
+        ``gcs_uri/monthly/`` are not wiped by the recursive delete.
     """
     fs = gcsfs.GCSFileSystem()
     path = gcs_uri.removeprefix("gs://").rstrip("/")
-    if fs.exists(path):
-        fs.rm(path, recursive=True)
+
+    def _clear_store() -> None:
+        if not fs.exists(path):
+            return
+        if preserve_dirs:
+            for item in fs.ls(path, detail=False):
+                name = item.rstrip("/").split("/")[-1]
+                if name not in preserve_dirs:
+                    fs.rm(item.rstrip("/"), recursive=True)
+        else:
+            fs.rm(path, recursive=True)
+
+    _clear_store()
     try:
         ds.to_zarr(gcs_uri, mode="a", consolidated=consolidated)
     except zarr.errors.ContainsArrayError:
         if _gcs_complete(fs, gcs_uri):
             return
-        if fs.exists(path):
-            fs.rm(path, recursive=True)
+        _clear_store()
         ds.to_zarr(gcs_uri, mode="a", consolidated=consolidated)
     fs.touch(f"{path}/.complete")
 
@@ -823,7 +843,11 @@ class HYCOMLoader:
         logger.info("Concatenating 12 monthly HYCOM tiles for year %d...", year)
         monthly_datasets = [xr.open_zarr(uri, chunks="auto") for uri in month_uris]
         ds_annual = xr.concat(monthly_datasets, dim="time")
-        _gcs_safe_write(ds_annual, gcs_uri)
+        # Monthly zarr encoding carries per-month chunk specs that don't align with
+        # the Dask chunks of the concatenated dataset — drop to avoid ValueError in to_zarr.
+        for var in ds_annual.data_vars:
+            ds_annual[var].encoding.pop("chunks", None)
+        _gcs_safe_write(ds_annual, gcs_uri, preserve_dirs=("monthly",))
         logger.info("HYCOM year %d annual store written to %s", year, gcs_uri)
 
     def _interpolate_to_standard_depths(self, ds: xr.Dataset) -> xr.Dataset:
