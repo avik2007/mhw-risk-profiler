@@ -32,7 +32,7 @@ import gcsfs
 import numpy as np
 import xarray as xr
 
-from src.ingestion.harvester import _gcs_safe_write
+from src.ingestion.harvester import _gcs_complete, _gcs_safe_write
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,13 @@ ERA5_BANDS: dict[str, str] = {
     "u_component_of_wind_10m":    "10m_u_component_of_wind",
     "v_component_of_wind_10m":    "10m_v_component_of_wind",
     "mean_sea_level_pressure":    "mean_sea_level_pressure",
+    # TODO: verify that "sea_surface_temperature" exists as a band in ECMWF/ERA5/HOURLY
+    # on GEE before running production fetches. The DAILY collection exposes it, but
+    # HOURLY may not. If absent, GEE sampleRectangle returns defaultValue=0 silently,
+    # corrupting all SST inputs to the model. To verify: run
+    #   ee.ImageCollection("ECMWF/ERA5/HOURLY").first().bandNames().getInfo()
+    # and confirm "sea_surface_temperature" is in the result. If not, remove this entry
+    # and remove "sea_surface_temperature" from WN2_VARS in scripts/_train_utils.py.
     "sea_surface_temperature":    "sea_surface_temperature",
 }
 
@@ -146,6 +153,21 @@ class ERA5Harvester:
                 "Check GEE asset availability for this period."
             )
 
+        # ECMWF/ERA5/HOURLY provides 24 images per day. A full calendar year
+        # must have at least 365*24 = 8760 images (8784 in a leap year).
+        # Fewer images means the collection has a coverage gap for this period —
+        # fetching partial data would silently corrupt the annual tile.
+        start_year = _date.fromisoformat(start_date).year
+        import calendar as _calendar
+        days_in_year = 366 if _calendar.isleap(start_year) else 365
+        min_expected = days_in_year * 24
+        if n_images < min_expected:
+            raise ValueError(
+                f"ERA5 HOURLY collection has only {n_images} images for "
+                f"{start_date} to {end_date}; expected >= {min_expected}. "
+                "The collection may not cover this period fully on GEE."
+            )
+
         logger.info("ERA5 hourly: %d images found, aggregating to daily means.", n_images)
 
         # Build calendar-day list. end_date is exclusive (GEE filterDate convention).
@@ -212,7 +234,7 @@ class ERA5Harvester:
         ----------
         year : int
             Calendar year to fetch (Jan 1 – Dec 31).
-            ECMWF/ERA5/DAILY on GEE covers 1979–present.
+            ECMWF/ERA5/HOURLY on GEE covers 1979–present (verify end coverage for recent years).
         bbox : tuple of float
             (lon_min, lat_min, lon_max, lat_max) in decimal degrees WGS84, -180–180 convention.
             Passed directly to fetch() without transformation.
@@ -235,8 +257,7 @@ class ERA5Harvester:
             raise RuntimeError("Call authenticate() before fetch_and_cache().")
 
         fs = gcsfs.GCSFileSystem()
-        meta = gcs_uri.removeprefix("gs://").rstrip("/") + "/.zmetadata"
-        if fs.exists(meta):
+        if _gcs_complete(fs, gcs_uri):
             logger.info("Cache hit — skipping ERA5 fetch for %d: %s", year, gcs_uri)
             return
 

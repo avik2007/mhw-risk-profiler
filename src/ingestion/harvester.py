@@ -43,6 +43,8 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
 
+import zarr.errors
+
 try:
     import ee
 except ImportError:  # earthengine-api not installed in non-GEE environments
@@ -66,6 +68,13 @@ def _gcs_safe_write(ds: xr.Dataset, gcs_uri: str, consolidated: bool = True) -> 
          ``delete_dir()``, producing an identical result to ``mode="w"`` on a
          freshly cleared path.
 
+    Race-safety: if a concurrent writer finishes between our fs.exists() check and
+    our to_zarr() call, zarr v3 raises ContainsArrayError.  We catch it, check if
+    the store is now complete, and either return (cache hit) or delete-and-retry once.
+
+    After a successful write, a ``.complete`` sentinel is written so _gcs_complete()
+    can recognise the store without relying on zarr v3 consolidated metadata.
+
     Parameters
     ----------
     ds : xr.Dataset
@@ -73,23 +82,33 @@ def _gcs_safe_write(ds: xr.Dataset, gcs_uri: str, consolidated: bool = True) -> 
     gcs_uri : str
         GCS destination URI, e.g. "gs://bucket/hycom/tiles/2022/".
     consolidated : bool
-        Whether to write consolidated .zmetadata (default True).
-        Must be True for _gcs_complete() idempotency checks to work.
+        Whether to write consolidated metadata (default True).
     """
     fs = gcsfs.GCSFileSystem()
     path = gcs_uri.removeprefix("gs://").rstrip("/")
     if fs.exists(path):
         fs.rm(path, recursive=True)
-    ds.to_zarr(gcs_uri, mode="a", consolidated=consolidated)
+    try:
+        ds.to_zarr(gcs_uri, mode="a", consolidated=consolidated)
+    except zarr.errors.ContainsArrayError:
+        if _gcs_complete(fs, gcs_uri):
+            return
+        if fs.exists(path):
+            fs.rm(path, recursive=True)
+        ds.to_zarr(gcs_uri, mode="a", consolidated=consolidated)
+    fs.touch(f"{path}/.complete")
 
 
 def _gcs_complete(fs: gcsfs.GCSFileSystem, gcs_uri: str) -> bool:
-    """Return True only if gcs_uri contains a complete, consolidated Zarr store.
+    """Return True only if gcs_uri contains a complete Zarr store.
 
-    Uses the presence of .zmetadata as the completeness marker.  This file is
-    written *last* by ``to_zarr(consolidated=True)``, so a directory that only
-    contains partial chunk files (e.g. from a mid-write preemption) returns
-    False and will be overwritten on the next run.
+    Primary check: ``.complete`` sentinel written by _gcs_safe_write after a
+    successful to_zarr() call.
+
+    Fallback: ``water_v/zarr.json`` presence, which covers HYCOM monthly/annual
+    tiles written before this sentinel scheme was introduced.  zarr v3 does not
+    write ``.zmetadata`` (the original sentinel), so that check always returned
+    False and the idempotency guard was silently broken.
 
     Parameters
     ----------
@@ -100,8 +119,11 @@ def _gcs_complete(fs: gcsfs.GCSFileSystem, gcs_uri: str) -> bool:
         The leading "gs://" prefix and any trailing slash are stripped before
         the existence check, matching gcsfs path conventions.
     """
-    meta = gcs_uri.removeprefix("gs://").rstrip("/") + "/.zmetadata"
-    return fs.exists(meta)
+    base = gcs_uri.removeprefix("gs://").rstrip("/")
+    if fs.exists(f"{base}/.complete"):
+        return True
+    # Fallback for HYCOM tiles written before the .complete sentinel was introduced.
+    return fs.exists(f"{base}/water_v/zarr.json")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -568,7 +590,7 @@ class WeatherNext2Harvester:
         if self._key:
             os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", self._key)
 
-        ds = self._build_dataset(collection, region, n_members)
+        ds = self._build_dataset(collection, region, n_members, gcs_uri)
         _gcs_safe_write(ds, gcs_uri)
         logger.info("WeatherNext 2 Zarr written: %s", gcs_uri)
 
