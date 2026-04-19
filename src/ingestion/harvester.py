@@ -847,6 +847,10 @@ class HYCOMLoader:
         # the Dask chunks of the concatenated dataset — drop to avoid ValueError in to_zarr.
         for var in ds_annual.data_vars:
             ds_annual[var].encoding.pop("chunks", None)
+        # Rechunk time to uniform 30-day blocks so zarr can validate chunk
+        # alignment. xr.concat inherits per-month zarr chunk specs that are
+        # mutually incompatible along the time axis.
+        ds_annual = ds_annual.chunk({"time": 30})
         _gcs_safe_write(ds_annual, gcs_uri, preserve_dirs=("monthly",))
         logger.info("HYCOM year %d annual store written to %s", year, gcs_uri)
 
