@@ -1,10 +1,15 @@
 """
 fetch_oisst_climatology.py — Fetch NOAA OISST v2.1, compute 30-year baseline, write to GCS.
 ==========================================================================
-Fetches daily GoM SST for 1982-2011 from NOAA NCEI THREDDS OPeNDAP,
-computes 90th-percentile threshold per (dayofyear, lat, lon) with an 11-day
-centered rolling window (Hobday 2016), and writes to GCS as sst_threshold_90,
-replacing the scientifically invalid 2-year HYCOM baseline.
+Fetches daily GoM SST for 1982-2011 from NOAA CoastWatch ERDDAP griddap
+(server-side spatial+temporal subset), computes 90th-percentile threshold
+per (dayofyear, lat, lon) with an 11-day centered rolling window (Hobday 2016),
+and writes to GCS as sst_threshold_90, replacing the scientifically invalid
+2-year HYCOM baseline.
+
+ERDDAP approach: 30 annual requests (~500 KB each) vs 10,800 global-file
+downloads (18 GB total). Avoids NCEI rate limiting and lon-range mismatch
+(OISST native 0-360 lon vs our GoM bbox in -180 to 180 convention).
 
 Usage (on VM):
     nohup env \\
@@ -13,29 +18,23 @@ Usage (on VM):
       /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/fetch_oisst_climatology.py \\
       >> ~/nohup_oisst.log 2>&1 </dev/null & disown $!
 
-THREDDS URL note:
-    Verify reachability before VM run:
-        curl -s -o /dev/null -w "%{http_code}" \\
-          "https://www.ncei.noaa.gov/thredds/dodsC/OisstBase/NetCDF/V2.1/AVHRR/198201/oisst-avhrr-v02r01.19820101.nc"
-    Expected: 200. If unavailable, check https://www.ncei.noaa.gov/thredds/catalog.html for
-    current OISST v2.1 paths and update OISST_THREDDS_BASE below.
+ERDDAP reachability check:
+    curl -s -o /dev/null -w "%{http_code}" \\
+      "https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg_LonPM180.nc?sst[(1982-01-01T12:00:00Z):(1982-01-01T12:00:00Z)][(0.0)][(41.0):(45.0)][(-71.0):(-66.0)]"
+    Expected: 200.
 """
 from __future__ import annotations
 
-import calendar
 import logging
 import os
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 import gcsfs
-import numpy as np
 import requests
 import xarray as xr
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.analytics.mhw_detection import compute_climatology
 from src.ingestion.harvester import _gcs_safe_write, _gcs_complete
 
@@ -55,54 +54,33 @@ GoM_LON_MAX = -66.0
 GoM_LAT_MIN =  41.0
 GoM_LAT_MAX =  45.0
 
-OISST_BASE_URL = (
-    "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation"
-    "/v2.1/access/avhrr"
+# ERDDAP griddap dataset with -180/180 lon convention (matches our GoM bbox)
+ERDDAP_BASE = (
+    "https://coastwatch.pfeg.noaa.gov/erddap/griddap"
+    "/ncdcOisst21Agg_LonPM180.nc"
 )
 
 
 # ---------------------------------------------------------------------------
-# URL construction
+# Fetch — one request per year via ERDDAP griddap
 # ---------------------------------------------------------------------------
 
-def build_oisst_url(year: int, month: int, day: int) -> str:
+def fetch_oisst_gom_year(year: int) -> xr.DataArray:
     """
-    Build NCEI THREDDS OPeNDAP URL for a single OISST v2.1 daily file.
+    Fetch one calendar year of OISST v2.1 SST for the GoM bbox via ERDDAP.
 
-    Parameters
-    ----------
-    year, month, day : int
-        Calendar date.
+    Uses NOAA CoastWatch ERDDAP griddap server-side subsetting:
+    - Temporal range: Jan 1 – Dec 31 of *year* (daily, noon UTC)
+    - Spatial range: GoM bbox (lat 41–45°N, lon -71–-66°E)
+    - Vertical: surface only (zlev=0)
 
-    Returns
-    -------
-    str
-        OPeNDAP URL for the daily netCDF4 file.
-        Format: .../YYYYMM/oisst-avhrr-v02r01.YYYYMMDD.nc
-    """
-    ym  = f"{year}{month:02d}"
-    ymd = f"{year}{month:02d}{day:02d}"
-    return f"{OISST_BASE_URL}/{ym}/oisst-avhrr-v02r01.{ymd}.nc"
-
-
-# ---------------------------------------------------------------------------
-# Fetch
-# ---------------------------------------------------------------------------
-
-def fetch_oisst_gom(year: int, month: int) -> xr.DataArray:
-    """
-    Fetch one calendar month of OISST v2.1 SST for the GoM bbox via HTTPS.
-
-    Downloads each daily NetCDF4 file via requests (plain HTTPS, not OPeNDAP),
-    opens from BytesIO to avoid netcdf4 engine's OPeNDAP path, subsets to GoM,
-    and concatenates into a (time, lat, lon) DataArray.
+    This fetches ~500 KB per year vs 1.7 MB × 365 = 620 MB with per-day files.
+    ERDDAP lon convention is -180/180 so our negative-lon GoM bbox works directly.
 
     Parameters
     ----------
     year : int
         Calendar year (1982–2011).
-    month : int
-        Calendar month (1–12).
 
     Returns
     -------
@@ -110,32 +88,31 @@ def fetch_oisst_gom(year: int, month: int) -> xr.DataArray:
         SST [°C], dims (time, lat, lon), subset to GoM bbox.
         NaN fill values from the source file are preserved.
     """
-    n_days = calendar.monthrange(year, month)[1]
-    slabs = []
-    for day in range(1, n_days + 1):
-        url = build_oisst_url(year, month, day)
-        resp = requests.get(url, timeout=120)
-        resp.raise_for_status()
-        # netcdf4 engine rejects file-like objects; write to named temp file instead
-        with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
-            tmp.write(resp.content)
-            tmppath = tmp.name
-        try:
-            day_ds = xr.open_dataset(
-                tmppath,
-                engine="netcdf4",
-                drop_variables=["ice", "anom", "err"],
-            )
-            sst = (
-                day_ds["sst"]
-                .sel(lat=slice(GoM_LAT_MIN, GoM_LAT_MAX), lon=slice(GoM_LON_MIN, GoM_LON_MAX))
-                .squeeze("zlev", drop=True)
-                .compute()
-            )
-        finally:
-            os.unlink(tmppath)
-        slabs.append(sst)
-    return xr.concat(slabs, dim="time")
+    url = (
+        f"{ERDDAP_BASE}?sst"
+        f"[({year}-01-01T12:00:00Z):({year}-12-31T12:00:00Z)]"
+        f"[(0.0)]"
+        f"[({GoM_LAT_MIN}):({GoM_LAT_MAX})]"
+        f"[({GoM_LON_MIN}):({GoM_LON_MAX})]"
+    )
+    resp = requests.get(url, timeout=300)
+    resp.raise_for_status()
+
+    ct = resp.headers.get("Content-Type", "")
+    if "netcdf" not in ct and "octet-stream" not in ct:
+        raise RuntimeError(
+            f"ERDDAP returned unexpected Content-Type '{ct}' for {year} — "
+            "likely an error page; check ERDDAP dataset ID or time range."
+        )
+
+    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
+        tmp.write(resp.content)
+        tmppath = tmp.name
+    try:
+        ds = xr.open_dataset(tmppath, engine="netcdf4")
+        return ds["sst"].squeeze("zlev", drop=True).compute()
+    finally:
+        os.unlink(tmppath)
 
 
 # ---------------------------------------------------------------------------
@@ -197,39 +174,26 @@ def main() -> None:
         logger.info("OISST climatology already complete at %s — nothing to do.", clim_uri)
         return
 
-    all_months = [
-        (y, m)
-        for y in range(CLIM_START_YEAR, CLIM_END_YEAR + 1)
-        for m in range(1, 13)
-    ]
+    years = list(range(CLIM_START_YEAR, CLIM_END_YEAR + 1))
     logger.info(
-        "Fetching OISST v2.1 %d–%d for GoM bbox — %d months, 6 parallel workers...",
-        CLIM_START_YEAR, CLIM_END_YEAR, len(all_months),
+        "Fetching OISST v2.1 %d–%d for GoM bbox via ERDDAP — %d annual requests...",
+        CLIM_START_YEAR, CLIM_END_YEAR, len(years),
     )
 
-    # Fetch months in parallel; results keyed by (year, month) to preserve order.
-    # max_workers=6: empirically safe for NCEI THREDDS without triggering rate limits.
-    results: dict[tuple[int, int], xr.DataArray] = {}
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        future_to_ym = {
-            pool.submit(fetch_oisst_gom, y, m): (y, m)
-            for y, m in all_months
-        }
-        for future in as_completed(future_to_ym):
-            ym = future_to_ym[future]
-            try:
-                results[ym] = future.result()
-                logger.info("Fetched %d-%02d (%d/%d done)", ym[0], ym[1], len(results), len(all_months))
-            except Exception as exc:
-                logger.error("Failed %d-%02d: %s — skipping", ym[0], ym[1], exc)
+    annual_slabs: list[xr.DataArray] = []
+    for year in years:
+        try:
+            da = fetch_oisst_gom_year(year)
+            annual_slabs.append(da)
+            logger.info("Fetched %d (%d/%d)", year, len(annual_slabs), len(years))
+        except Exception as exc:
+            logger.error("Failed %d: %s — skipping", year, exc)
 
-    monthly_slabs = [results[ym] for ym in all_months if ym in results]
+    if not annual_slabs:
+        raise RuntimeError("No OISST data fetched — check ERDDAP URL and network access.")
 
-    if not monthly_slabs:
-        raise RuntimeError("No OISST data fetched — check THREDDS URL and network access.")
-
-    logger.info("Concatenating %d monthly slabs...", len(monthly_slabs))
-    sst_all = xr.concat(monthly_slabs, dim="time").sortby("time")
+    logger.info("Concatenating %d annual slabs...", len(annual_slabs))
+    sst_all = xr.concat(annual_slabs, dim="time").sortby("time")
 
     compute_and_write_climatology(sst_all, clim_uri)
     logger.info("Done. Climatology at %s", clim_uri)
