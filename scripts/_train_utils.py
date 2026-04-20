@@ -324,7 +324,8 @@ def save_plots(
     gate_vals = gate[0].cpu().numpy()  # (member,)
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.hist(gate_vals, bins=20, color="teal", edgecolor="white")
+    bins = 20 if gate_vals.std() > 1e-6 else 1
+    ax.hist(gate_vals, bins=bins, color="teal", edgecolor="white")
     ax.axvline(gate_vals.mean(), color="black", linestyle="--", label=f"mean={gate_vals.mean():.3f}")
     ax.set_xlabel("Gate value (0=atm-dominant, 1=depth-dominant)")
     ax.set_ylabel("Count"); ax.set_title(f"{prefix.upper()} — Gate distribution (final epoch)")
