@@ -17,14 +17,11 @@ Two parallel tracks. Track A code DONE. Track B code is next session's first tas
 
 - [x] **A1 DONE** — `compute_climatology()` updated with `window=11` rolling (commit `019bdb3`)
 - [x] **A2 DONE** — `fetch_oisst_climatology.py` written + 6 tests (commit `d6b0584`)
-- [x] **A3 RUNNING** — OISST fetch launched locally (nohup_oisst.log), ETA 30-90 min
-  ```bash
-  gsutil -m rm -r gs://mhw-risk-cache/hycom/climatology/
-  nohup env GOOGLE_APPLICATION_CREDENTIALS=... MHW_GCS_BUCKET=gs://mhw-risk-cache \
-    /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/fetch_oisst_climatology.py \
-    >> ~/nohup_oisst.log 2>&1 </dev/null & disown $!
-  ```
-  ETA: ~30-90 min. Verify THREDDS URL reachable first (curl check in plan).
+- [ ] **A3 IN PROGRESS** — OISST fetch running on VM (mhw-data-prep), ETA ~1.5hr from last launch
+  - 3 URL/engine bugs fixed (commits `b19c1bf`, `7217a55`, `9499c64`, `e7116ed`)
+  - Uses direct HTTPS + tempfile + 6-worker parallel month fetch
+  - Monitor: `gcloud compute ssh mhw-data-prep --zone=us-central1-a -- "tail -20 ~/nohup_oisst.log"`
+  - Verify complete: `gsutil ls gs://mhw-risk-cache/hycom/climatology/.complete`
 
 ---
 
@@ -34,7 +31,9 @@ Two parallel tracks. Track A code DONE. Track B code is next session's first tas
   - `sea_surface_temperature` re-added to WN2_VARIABLES; `arr[arr == 0.0] = np.nan` in inner loop
   - `test_wn2_variables_includes_sst` + `test_sst_zero_pixels_masked_to_nan` added; 78/78 pass
 
-- [x] **B2 RUNNING** — WN2 2022+2023 re-fetch launched locally in parallel (nohup_wn2_2022.log, nohup_wn2_2023.log), ETA ~55 min each
+- [ ] **B2 IN PROGRESS** — WN2 2022→2023 sequential in tmux `wn2` (local), days 1-45 cache hits, fetching from day 46
+  - Monitor: `tmux attach -t wn2` or `tail -f ~/nohup_wn2_2022.log`
+  - ETA: ~48 min each (320 remaining days × ~9s/day)
 
 - [ ] **B3 VM** — After A3 + B2 both complete:
   - Retrain ERA5 with new 30yr threshold: `train_era5.py --epochs 50`

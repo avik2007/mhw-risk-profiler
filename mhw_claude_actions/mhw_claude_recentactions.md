@@ -4,6 +4,23 @@
 
 ---
 
+## [2026-04-20] Session 20 — OISST fetch debugging; WN2 resume; 3 URL/engine fixes
+
+### What happened
+- **Diagnosed overnight failures**: OISST died (WSL shutdown, ~20% done); WN2 2022+2023 died (gRPC [Errno 11] from parallel GEE sessions, 45/365 days each with SST)
+- **HYCOM 2022+2023**: confirmed `.complete` sentinels present — those are DONE
+- **WN2 resumed**: launched sequentially in tmux `wn2` (2022→2023); cache hits for days 1-45, fetching new from day 46
+- **OISST fix 1** (commit `b19c1bf`): parallelized month fetch with `ThreadPoolExecutor(max_workers=6)` → ~6x speedup (~1.5hr)
+- **OISST fix 2** (commit `7217a55`): THREDDS OPeNDAP URL returns 400 (moved); updated to direct HTTPS path
+- **OISST fix 3** (commit `9499c64`): `netcdf4` engine treats `https://` as OPeNDAP (parser error); switched to `requests.get` + temp file
+- **OISST fix 4** (commit `e7116ed`): `netcdf4` backend rejects BytesIO; switched to `tempfile.NamedTemporaryFile` + `os.unlink`
+- Tests updated for new mock pattern (requests.get + open_dataset); 6/6 pass
+- OISST now running on VM (PID 21120 or successor after re-launches); all months fetching correctly
+
+### Key decisions
+- Run WN2 sequentially (not parallel) — parallel GEE sessions cause gRPC resource exhaustion
+- Use tempfile (not BytesIO) for OISST daily NC files — most compatible with netcdf4 engine
+
 ## [2026-04-20] Session 19 — B1 code done; A3+B2 launched; LinkedIn drafts written
 
 ### What happened

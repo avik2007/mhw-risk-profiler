@@ -159,6 +159,9 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-04-20] harmonize() uses global TARGET_LAT/LON (721×1440); for a GoM bbox tile this produces ~485 GB after expand_and_perturb. Fix: clip TARGET_LAT/LON to input data bbox inside harmonize().
 [2026-04-20] HYCOM climatology saved with 'lat'/'lon' dims (0.08° native); merged ERA5 uses 'latitude'/'longitude' (0.25°). Without rename+interp in build_tensors(), xarray outer-products them to ~15 GB → OOM.
 [2026-04-20] Pass merged.latitude.values (numpy) not merged.latitude (DataArray) to interp() — DataArray dim metadata can cause misalignment in downstream xarray comparisons.
+[2026-04-20] NCEI OISST THREDDS OPeNDAP URL returns 400 — use direct HTTPS: /data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/
+[2026-04-20] xarray netcdf4 backend treats https:// as OPeNDAP and rejects BytesIO — use tempfile.NamedTemporaryFile + os.unlink for plain-HTTP NetCDF4 downloads
+[2026-04-20] Parallel GEE sessions (2 WN2 years simultaneously) cause gRPC [Errno 11] resource exhaustion — run WN2 years sequentially on same machine
 
 ## Pre-/clear Protocol
 
