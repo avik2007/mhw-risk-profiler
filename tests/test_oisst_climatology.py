@@ -46,12 +46,23 @@ def test_build_oisst_url_zero_pads_month_and_day():
     assert "19900305" in url
 
 
+def _make_fake_response(day_ds: xr.Dataset) -> MagicMock:
+    """Fake requests.Response whose .content is ignored; open_dataset is mocked separately."""
+    resp = MagicMock()
+    resp.content = b"fake-netcdf-bytes"
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
 def test_fetch_oisst_gom_drops_zlev():
     """fetch_oisst_gom must squeeze zlev and return (time, lat, lon) DataArray."""
     from scripts.fetch_oisst_climatology import fetch_oisst_gom
 
-    fake_ds = _make_fake_oisst(n_days=31)
-    with patch("scripts.fetch_oisst_climatology.xr.open_mfdataset", return_value=fake_ds):
+    single_day = _make_fake_oisst(n_days=1)
+    fake_resp = _make_fake_response(single_day)
+
+    with patch("scripts.fetch_oisst_climatology.requests.get", return_value=fake_resp), \
+         patch("scripts.fetch_oisst_climatology.xr.open_dataset", return_value=single_day):
         sst = fetch_oisst_gom(1982, 1)
 
     assert "zlev" not in sst.dims
@@ -63,23 +74,24 @@ def test_fetch_oisst_gom_subsets_to_gom_bbox():
     """fetch_oisst_gom must subset lat/lon to the GoM bbox."""
     from scripts.fetch_oisst_climatology import fetch_oisst_gom, GoM_LAT_MIN, GoM_LAT_MAX, GoM_LON_MIN, GoM_LON_MAX
 
-    # Fake dataset with wider extent than GoM bbox
-    n_days, n_lat_wide, n_lon_wide = 10, 40, 60
+    n_lat_wide, n_lon_wide = 40, 60
     rng = np.random.default_rng(0)
-    times = xr.cftime_range("1982-01-01", periods=n_days, freq="D")
+    times = xr.cftime_range("1982-01-01", periods=1, freq="D")
     sst = xr.DataArray(
-        rng.normal(20.0, 1.0, (n_days, 1, n_lat_wide, n_lon_wide)).astype("float32"),
+        rng.normal(20.0, 1.0, (1, 1, n_lat_wide, n_lon_wide)).astype("float32"),
         dims=["time", "zlev", "lat", "lon"],
         coords={
             "time": times,
             "zlev": [0.0],
-            "lat":  np.linspace(30.0, 55.0, n_lat_wide),   # wider than GoM
-            "lon":  np.linspace(-90.0, -55.0, n_lon_wide),  # wider than GoM
+            "lat":  np.linspace(30.0, 55.0, n_lat_wide),
+            "lon":  np.linspace(-90.0, -55.0, n_lon_wide),
         },
     )
-    fake_ds = xr.Dataset({"sst": sst})
+    wide_ds = xr.Dataset({"sst": sst})
+    fake_resp = _make_fake_response(wide_ds)
 
-    with patch("scripts.fetch_oisst_climatology.xr.open_mfdataset", return_value=fake_ds):
+    with patch("scripts.fetch_oisst_climatology.requests.get", return_value=fake_resp), \
+         patch("scripts.fetch_oisst_climatology.xr.open_dataset", return_value=wide_ds):
         result = fetch_oisst_gom(1982, 1)
 
     assert float(result.lat.min()) >= GoM_LAT_MIN - 0.5

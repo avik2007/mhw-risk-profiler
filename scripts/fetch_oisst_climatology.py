@@ -29,8 +29,11 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import io
+
 import gcsfs
 import numpy as np
+import requests
 import xarray as xr
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -89,11 +92,11 @@ def build_oisst_url(year: int, month: int, day: int) -> str:
 
 def fetch_oisst_gom(year: int, month: int) -> xr.DataArray:
     """
-    Fetch one calendar month of OISST v2.1 SST for the GoM bbox via OPeNDAP.
+    Fetch one calendar month of OISST v2.1 SST for the GoM bbox via HTTPS.
 
-    Opens all daily files for the month as a multi-file dataset, subsets to
-    the GoM bounding box, drops the single zlev dimension, and materialises
-    the small (~10-20 KB) spatial subset.
+    Downloads each daily NetCDF4 file via requests (plain HTTPS, not OPeNDAP),
+    opens from BytesIO to avoid netcdf4 engine's OPeNDAP path, subsets to GoM,
+    and concatenates into a (time, lat, lon) DataArray.
 
     Parameters
     ----------
@@ -109,24 +112,23 @@ def fetch_oisst_gom(year: int, month: int) -> xr.DataArray:
         NaN fill values from the source file are preserved.
     """
     n_days = calendar.monthrange(year, month)[1]
-    urls = [build_oisst_url(year, month, d) for d in range(1, n_days + 1)]
-
-    ds = xr.open_mfdataset(
-        urls,
-        combine="by_coords",
-        engine="netcdf4",
-        drop_variables=["ice", "anom", "err"],
-    )
-
-    sst = (
-        ds["sst"]
-        .sel(
-            lat=slice(GoM_LAT_MIN, GoM_LAT_MAX),
-            lon=slice(GoM_LON_MIN, GoM_LON_MAX),
+    slabs = []
+    for day in range(1, n_days + 1):
+        url = build_oisst_url(year, month, day)
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        day_ds = xr.open_dataset(
+            io.BytesIO(resp.content),
+            engine="netcdf4",
+            drop_variables=["ice", "anom", "err"],
         )
-        .squeeze("zlev", drop=True)
-    )
-    return sst.compute()
+        sst = (
+            day_ds["sst"]
+            .sel(lat=slice(GoM_LAT_MIN, GoM_LAT_MAX), lon=slice(GoM_LON_MIN, GoM_LON_MAX))
+            .squeeze("zlev", drop=True)
+        )
+        slabs.append(sst.compute())
+    return xr.concat(slabs, dim="time")
 
 
 # ---------------------------------------------------------------------------
