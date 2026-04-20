@@ -26,10 +26,9 @@ import calendar
 import logging
 import os
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-
-import io
 
 import gcsfs
 import numpy as np
@@ -117,17 +116,25 @@ def fetch_oisst_gom(year: int, month: int) -> xr.DataArray:
         url = build_oisst_url(year, month, day)
         resp = requests.get(url, timeout=120)
         resp.raise_for_status()
-        day_ds = xr.open_dataset(
-            io.BytesIO(resp.content),
-            engine="netcdf4",
-            drop_variables=["ice", "anom", "err"],
-        )
-        sst = (
-            day_ds["sst"]
-            .sel(lat=slice(GoM_LAT_MIN, GoM_LAT_MAX), lon=slice(GoM_LON_MIN, GoM_LON_MAX))
-            .squeeze("zlev", drop=True)
-        )
-        slabs.append(sst.compute())
+        # netcdf4 engine rejects file-like objects; write to named temp file instead
+        with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
+            tmp.write(resp.content)
+            tmppath = tmp.name
+        try:
+            day_ds = xr.open_dataset(
+                tmppath,
+                engine="netcdf4",
+                drop_variables=["ice", "anom", "err"],
+            )
+            sst = (
+                day_ds["sst"]
+                .sel(lat=slice(GoM_LAT_MIN, GoM_LAT_MAX), lon=slice(GoM_LON_MIN, GoM_LON_MAX))
+                .squeeze("zlev", drop=True)
+                .compute()
+            )
+        finally:
+            os.unlink(tmppath)
+        slabs.append(sst)
     return xr.concat(slabs, dim="time")
 
 
