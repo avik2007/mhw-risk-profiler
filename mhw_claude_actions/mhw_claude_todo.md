@@ -5,41 +5,59 @@
 
 ---
 
-## ACTIVE — ERA5 training in progress (~00:45 UTC 2026-04-20)
+## ACTIVE — Fix WN2 SST missing from tiles + OISST 30yr baseline
 
-### Status at session 16 (~00:45 UTC 2026-04-20)
+### Plan: `docs/superpowers/plans/2026-04-20-oisst-climatology-and-wn2-sst-fix.md`
 
-**All GCS sentinels:** COMPLETE (5/5)
-**Training:** RUNNING on `mhw-data-prep` (n1-highmem-8, 52 GB), PID 4547
-**3 OOM bugs fixed this session (commits 87adafb, 2eb89c9, 814ee9d):**
-1. `harmonize()` interpolated ERA5 to global 721×1440 grid → 485 GB → fixed: clip TARGET_LAT/LON to input bbox
-2. `threshold` had `lat`/`lon` dims vs `latitude`/`longitude` in merged → 15 GB outer-product → fixed: rename+interp in `build_tensors()`
-3. Interp condition used mismatched-size DataArrays → replaced with unconditional `.values` interp
-**Memory peak observed:** ~3.4 GB RSS (vs 52 GB before fixes)
+Two parallel tracks. Track A code DONE. Track B code is next session's first task.
 
-### VM status as of ~00:45 UTC 2026-04-20
+---
 
-| VM | Task | Status |
-|----|------|--------|
-| `mhw-data-prep` (n1-highmem-8) | ERA5 training, 50 epochs | **RUNNING** PID 4547 |
-| All other VMs | — | COMPLETED/STOPPED |
+### Track A — OISST 30yr climatology (PARALLEL with Track B)
 
-**Manual restart (if training dies):**
-```bash
-gcloud compute ssh mhw-data-prep --zone=us-central1-a -- "
-cd ~/mhw-risk-profiler && git pull origin main && \
-> ~/nohup_train_era5.log && \
-nohup env \
-  GOOGLE_APPLICATION_CREDENTIALS=/home/avik2007/.config/gcp-keys/mhw-harvester.json \
-  MHW_GCS_BUCKET=gs://mhw-risk-cache \
-  /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/train_era5.py --epochs 50 \
-  >> ~/nohup_train_era5.log 2>&1 </dev/null & disown \$!"
-```
+- [x] **A1 DONE** — `compute_climatology()` updated with `window=11` rolling (commit `019bdb3`)
+- [x] **A2 DONE** — `fetch_oisst_climatology.py` written + 6 tests (commit `d6b0584`)
+- [x] **A3 RUNNING** — OISST fetch launched locally (nohup_oisst.log), ETA 30-90 min
+  ```bash
+  gsutil -m rm -r gs://mhw-risk-cache/hycom/climatology/
+  nohup env GOOGLE_APPLICATION_CREDENTIALS=... MHW_GCS_BUCKET=gs://mhw-risk-cache \
+    /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/fetch_oisst_climatology.py \
+    >> ~/nohup_oisst.log 2>&1 </dev/null & disown $!
+  ```
+  ETA: ~30-90 min. Verify THREDDS URL reachable first (curl check in plan).
 
-**Check log:**
-```bash
-gcloud compute ssh mhw-data-prep --zone=us-central1-a -- "tail -30 ~/nohup_train_era5.log"
-```
+---
+
+### Track B — WN2 SST fix (PARALLEL with Track A)
+
+- [x] **B1 DONE** — Add SST to `WN2_VARIABLES` + NaN mask in `_build_dataset()` (commit `bf10412`)
+  - `sea_surface_temperature` re-added to WN2_VARIABLES; `arr[arr == 0.0] = np.nan` in inner loop
+  - `test_wn2_variables_includes_sst` + `test_sst_zero_pixels_masked_to_nan` added; 78/78 pass
+
+- [x] **B2 RUNNING** — WN2 2022+2023 re-fetch launched locally in parallel (nohup_wn2_2022.log, nohup_wn2_2023.log), ETA ~55 min each
+
+- [ ] **B3 VM** — After A3 + B2 both complete:
+  - Retrain ERA5 with new 30yr threshold: `train_era5.py --epochs 50`
+  - Train WN2: `train_wn2.py --epochs 50`
+  - Verify `spread > 0` and `SVaR_95 > SVaR_50 > SVaR_05`
+
+---
+
+### Gemini findings resolved this session:
+- ✅ Climatology baseline (critical): → OISST 30yr (Track A)
+- ✅ Cache poisoning: → `_daily/` dirs explicitly deleted in B2
+- ✅ Land mask inconsistency: → xarray skipna handles naturally; no code change needed
+- ✅ Unit mismatch (K→°C): → already handled in `_train_utils.py:117`; no change needed
+
+### ERA5 training artifacts (v1, 2yr threshold — superseded after A3+B3):
+| Metric | Epoch 1 | Epoch 50 |
+|--------|---------|---------|
+| train_loss | 6111 | 6043 |
+| val_loss | 2149 | 2100 |
+| SVaR_95 | 0.57 °C·day | 1.10 °C·day |
+| spread | 0.00 | 0.00 |
+
+**GCS artifacts (v1):** `gs://mhw-risk-cache/era5/training_results/`
 
 ---
 

@@ -4,6 +4,433 @@
 
 ---
 
+## [2026-04-20] Session 19 — B1 code done; A3+B2 launched; LinkedIn drafts written
+
+### What happened
+- **B1 DONE** (commit `bf10412`): `sea_surface_temperature` re-added to `WN2_VARIABLES`; `arr[arr==0.0]=np.nan` land mask added in `_build_dataset()` inner loop; 2 new tests; 78/78 pass
+- **run_wn2_prep.py** updated with `--year` flag (commit `969bd06`) to enable parallel per-year VM execution
+- **A3 LAUNCHED**: deleted old GCS climatology, OISST 1982–2011 fetch running locally (`~/nohup_oisst.log`), ETA 30-90 min
+- **B2 LAUNCHED**: deleted all WN2 2022+2023 GCS cache (12.2k objects), both years re-fetching in parallel locally (`~/nohup_wn2_2022.log`, `~/nohup_wn2_2023.log`), ETA ~55 min each; confirmed progress at day 9/365 each
+- **LinkedIn drafts written** (commit `84d0ff6`): `docs/linkedin/2026-04-20-mhw-era5-draft-a.md` (short) + `draft-b.md` (medium), both with `[INSERT]` placeholders for B3 results
+
+### Key decisions
+- Confirmed Gaussian noise does NOT bias IG attributions — ERA5 XAI results are scientifically valid and postable
+- SVaR spread limitation (synthetic ensemble) is the caveat, not attribution validity
+- Lead post visual: SVaR map, emphasized visual: IG bar chart; promise WN2 follow-up
+
+### Next
+- Wait for A3 + B2 to complete, then B3: `train_era5.py --epochs 50` + `train_wn2.py --epochs 50`
+- Fill in LinkedIn draft placeholders with B3 results; review with user before posting
+
+---
+
+## [2026-04-20] Session 18 — OISST 30yr climatology code complete; plan written for parallel WN2+OISST execution
+
+### What happened
+
+**Gemini critique evaluated:**
+- Reviewed `mhw_gemini_scientific_critique_v1.md` (session 17 Gemini findings)
+- Cache poisoning (#1): REAL blocker — `_daily/` dirs must be deleted before WN2 re-fetch
+- Land mask inconsistency (#2): NOT a blocker — xarray `skipna=True` handles NaN land pixels in spatial mean naturally; no code change needed
+- Unit mismatch (#3): NOT a blocker — `_train_utils.py:117` already converts K→°C before SDD
+
+**Plan written:**
+- `docs/superpowers/plans/2026-04-20-oisst-climatology-and-wn2-sst-fix.md`
+- Two parallel tracks: Track A (OISST 30yr climatology) + Track B (WN2 SST fix)
+- P5 (OISST) moved up: runs in parallel with WN2 re-fetch, not after
+
+**Track A code — COMPLETE (2 commits):**
+- `compute_climatology()` in `src/analytics/mhw_detection.py`: added `window=11` param + scipy `uniform_filter1d` with `mode="wrap"` (circular, no boundary NaN). commit `019bdb3`
+- `scripts/fetch_oisst_climatology.py` created: fetches OISST v2.1 1982-2011 for GoM bbox via NCEI THREDDS OPeNDAP month-by-month, computes 90th-pct threshold with 11-day window, writes `sst_threshold_90` to GCS. commit `d6b0584`
+- 76/76 tests passing (6 new OISST tests + 2 rolling window tests)
+
+**Track B code — NOT YET STARTED:**
+- Next session start here: add `sea_surface_temperature` back to `WN2_VARIABLES` in `harvester.py:177`, add NaN mask (`arr[arr == 0.0] = np.nan`) in `_build_dataset()` inner loop ~line 548
+
+### Key decisions
+- `window=1` disables smoothing in `compute_climatology()` (backward compatible)
+- THREDDS URL needs curl verification on VM before running A3 (documented in plan)
+- ERA5 must be retrained after new 30yr threshold is in GCS (SDD labels change)
+- Delete `_daily/` dirs explicitly before WN2 re-fetch (cache poisoning fix)
+
+### State at session 18 end
+- Local: 76 tests passing; commits `019bdb3`, `d6b0584` on main; not pushed yet
+- GCS: old 2yr HYCOM climatology still in place (not deleted yet — VM step A3)
+- Next: push commits, then Track B code (B1), then VM work (A3 + B2 in parallel)
+
+---
+
+## [2026-04-20] Session 17 — ERA5 results reviewed, WN2 SST bug diagnosed
+
+### What happened
+- Reviewed ERA5 training log (GCS): train 6111→6043, val 2149→2100, spread=0.00 throughout
+- Diagnosed spread=0 root cause fully:
+  - `WN2_VARIABLES` excludes SST (harvester.py line 182); only atmospheric vars fetched from WN2
+  - ERA5 SST IS fetched (era5_harvester.py) and IS noised (NOISE_SIGMAS σ=0.5K), but SST crosses HYCOM threshold on same days for all members → noise never flips MHW boundary → spread=0
+  - This is an accepted limitation: ERA5 = deterministic reanalysis, synthetic noise cannot produce genuine ensemble spread
+- Diagnosed WN2 training latent crash: WN2 GCS tiles have NO sea_surface_temperature (confirmed gsutil ls); `build_tensors()` line 117 calls `merged["sea_surface_temperature"]` → KeyError
+- Decision: add SST back to WN2_VARIABLES + land mask (defaultValue=0→NaN) + re-fetch WN2 2022/2023 tiles
+- ERA5 model valid for XAI (IG attribution on deterministic SST→SDD mapping); spread/SVaR story requires WN2
+
+### State at session 17 end
+- No code changes this session (plan defined, execution deferred to next session)
+- mhw-data-prep VM: may still be running — check/stop before next data prep task
+- Next: implement plan (5 steps) at top of todo.md
+
+---
+
+## [2026-04-20] Session 16 — 3 OOM bugs fixed, ERA5 training complete (50 epochs)
+
+### Context
+Resumed from Session 15. Training had OOM-killed twice (total-vm 58 GB, anon-rss 52 GB) before reaching epoch 1. Diagnosed and fixed 3 separate OOM-causing bugs.
+
+### Bug 1 — harmonize() global grid interp (commit 87adafb)
+- `harmonize()` interpolated ERA5 (4×5 GoM tile) to global `TARGET_LAT` (721) × `TARGET_LON` (1440) grids
+- After `expand_and_perturb(64 members)`: 64 × 365 × 721 × 1440 × 5 vars × 4 bytes ≈ 485 GB → OOM
+- Fix: compute union bbox from input data inside `harmonize()`, filter TARGET_LAT/LON to bbox before interp
+- After fix: 64 × 365 × 17 × 21 × 5 vars × 4 bytes ≈ 165 MB ✓
+
+### Bug 2 — threshold coord name mismatch → outer-product (commit 2eb89c9)
+- HYCOM climatology saved with `lat`/`lon` dims (101×63 native grid)
+- `merged` ERA5 uses `latitude`/`longitude` (17×21 target grid)
+- `compute_mhw_mask(sst, threshold)` → xarray outer-products (17×21) × (101×63) → ~15 GB array → OOM
+- Fix: rename `lat`→`latitude`, `lon`→`longitude` then interp to `merged.latitude.values` in `build_tensors()` before calling `compute_mhw_mask`
+
+### Bug 3 — interp condition with mismatched-size DataArrays (commit 814ee9d)
+- The condition `(threshold_regrid.latitude != merged.latitude).any()` compared 101-element vs 17-element arrays
+- Could produce incorrect result (remaining latitude=5 mismatch in mask_np shape)
+- Fix: unconditionally interp with `.values` (plain numpy) instead of DataArray
+
+### Training completed
+- All 68 tests passing throughout
+- Training ran 50 epochs: train 6111→6043, val 2149→2100
+- `spread=0.00` throughout: Gaussian noise in ERA5 vars doesn't differentiate SDD per member (known limitation)
+- SVaR_95=SVaR_50=SVaR_05 (degenerate spread, expected)
+- Weights saved: `data/models/era5_weights.pt`, `era5_best_weights.pt`
+- Plots saved: `data/results/plots/era5_*.png` (5 files)
+- All artifacts backed up to `gs://mhw-risk-cache/era5/training_results/`
+
+### State at session 16 end (~01:30 UTC 2026-04-20)
+- mhw-data-prep (n1-highmem-8): training complete, VM still running
+- GCS: all training artifacts backed up
+- Next: review results with user, decide on spread=0.00 / SDD scale issues before LinkedIn post
+
+---
+
+## [2026-04-19] Session 15 — Data prep complete, ERA5 training launched on upgraded VM
+
+### Context
+Resumed from Session 14. All HYCOM data still in flight. Worked through 4 recovery steps and got training running.
+
+### Actions taken
+
+**Step 1: 2023 .complete sentinels** — all 12 monthly tiles had data but no sentinel. Used `gsutil cp /dev/null` (gsutil touch not supported) to write all 12.
+
+**Step 2: 2022 monthly verification** — all 12 .complete present (dedicated VMs completed overnight).
+
+**Step 3: mhw-hycom2023-prep restarted** — found 2023 annual already complete (cache hit). Logged "HYCOM 2023 complete."
+
+**Step 4: mhw-data-prep restarted** — stale code on VM was same commit as local (2305080). Previous crashes were from before fix was deployed. New run: all 12 monthly cache hits → annual assembly succeeded (17:47 UTC) → climatology computed → ERA5/WN2 cache hits → "Data prep complete."
+
+**Training cron installed** — `~/launch_training_when_ready.sh` polls `climatology/.complete` every 5 min, self-removes after trigger. Fired at 18:00 UTC.
+
+**OOM on e2-standard-4 (16GB)** — `load_real_data()` materializes ~13GB; process OOM-killed twice. Upgraded VM to `n1-highmem-8` (52GB). Training restarted: PID 987, 20.7% mem (~11GB), healthy headroom.
+
+**[P9] added to todo** — lazy/chunked data loading fix for `load_real_data()` in train_era5.py + train_wn2.py.
+
+### State at session 15 end (~21:00 UTC 2026-04-19)
+- All 5 GCS sentinels: COMPLETE
+- mhw-data-prep (n1-highmem-8): ERA5 training running, PID 987
+- Training log: `~/nohup_train_era5.log` on mhw-data-prep
+
+---
+
+## [2026-04-19] Session 14 — Concurrent-write catastrophe diagnosed, Option A recovery, rechunk bug fixed
+
+### Context
+Resumed from Session 13. Found multi-VM chaos: mhw-data-prep (sequential m01→m12) AND dedicated month VMs were writing to the same zarr paths concurrently. mhw-hycom2023-prep still crashed. Three separate bugs encountered and fixed.
+
+### Catastrophe: concurrent writes across VMs (April 19)
+- Session 13 left mhw-data-prep running sequentially AND 9 dedicated VMs running in parallel
+- Both mhw-data-prep and mhw-2022-m01 (and others) were writing to same GCS zarr paths simultaneously
+- mhw-2022-m06 and mhw-2022-m07 VMs were BOTH fetching months 7-9 concurrently (double concurrent write)
+- Neither VM had any Python process alive — both crashed from mutual interference
+- Root cause: no coordination between mhw-data-prep sequential logic and dedicated per-month VMs
+- **Lesson: never run mhw-data-prep sequential AND dedicated month VMs simultaneously**
+
+### Recovery (Option A):
+- Killed mhw-data-prep PID 937 (was re-fetching m01 sequentially)
+- Restarted mhw-2022-m06 → m06 only, mhw-2022-m07 → m07 only
+- Started mhw-data-prep → m09 then m12 sequentially (only uncovered months)
+- Touched 2023 monthly .complete sentinels (all 12) via `gsutil cp /dev/null`
+- Restarted mhw-hycom2023-prep for 2023 annual assembly
+
+### Bug fixed: mhw-hycom2023-prep recurring crash (commit `2305080`)
+- After .complete sentinel fix, 2023-prep found all 12 cache hits and proceeded to annual concat
+- Crashed: `ValueError: Zarr requires uniform chunk sizes except for final chunk` on `water_temp`
+- Root cause: `xr.concat` of 12 monthly zarrs produces irregular dask chunks along time axis (each month has per-month zarr chunk spec; 28-31 days/month = non-uniform chunk sizes)
+- Previous fix (pop `encoding["chunks"]`) cleared metadata mismatch but dask chunk array itself remained irregular
+- Fix: `ds_annual = ds_annual.chunk({"time": 30})` after encoding pop, before `_gcs_safe_write`
+- Pushed, pulled on mhw-hycom2023-prep and mhw-data-prep; 2023-prep restarted and running (108% CPU)
+
+### State at session 14 (~04:10 UTC 2026-04-19 = 21:10 PDT 2026-04-18)
+- 2022 monthly m01-m11: all dedicated VMs running, started ~00:00 UTC, 4+ hrs in, OPeNDAP still downloading
+- 2022 m09: mhw-data-prep fetching (started 00:40 UTC); m12 queued after m09
+- 2022 annual assembly: NOT started — need to trigger manually after all 12 .complete present
+- 2023 annual assembly: mhw-hycom2023-prep running with rechunk fix (started 04:10 UTC)
+- Training: blocked on 2022 annual + climatology + 2023 annual
+
+### Lesson applied
+- `[2026-04-19]` xr.concat of N monthly zarrs → irregular dask time chunks even after encoding pop → rechunk({"time": 30}) required before annual write
+
+---
+
+## [2026-04-18] Session 13 — Two harvester bugs fixed, 9 dedicated VMs spun up, 2022 re-fetch in progress
+
+### Context
+Resumed from Session 12. mhw-data-prep had crashed on 2022 annual assembly due to two bugs. All 2022 monthly tiles deleted by crash.
+
+### Bugs fixed (commit `633d0c8`, pushed, pulled on all VMs)
+
+**Bug A — `_gcs_safe_write` recursive delete wiped 2022 monthly tiles:**
+- HNS bucket: `fs.exists("hycom/tiles/2022/")` = True (parent dir of monthly tiles)
+- `_gcs_safe_write` called `fs.rm(path, recursive=True)` before annual write → deleted all m01-m12
+- Fix: added `preserve_dirs=("monthly",)` parameter + `_clear_store()` inner helper that skips listed subdirs
+- Annual write now passes `preserve_dirs=("monthly",)`
+
+**Bug B — xr.concat encoding misalignment ValueError:**
+- Monthly zarrs carry `encoding["chunks"]` that don't align with Dask chunks of concatenated dataset
+- Fix: `ds_annual[var].encoding.pop("chunks", None)` for all data vars before `_gcs_safe_write`
+
+### Recovery actions
+- Deleted partial 2022 annual zarr from GCS (`zarr.json` + `time/` only)
+- Restarted `mhw-data-prep` (PID 937) with `run_data_prep.py` (handles all 2022 months + annual + climatology)
+- Restarted `mhw-hycom2023-prep` (2023 m11+m12 + annual assembly)
+- Spun up 9 dedicated per-month VMs (`mhw-2022-m01/02/03/04/05/06/08/10/11`) — each self-terminates after job
+- m07, m09, m12 never got dedicated VMs (GCP quota/rate limits); covered by `mhw-data-prep` sequential
+- Set up CronCreate job `aeb30b31` polling every 30min for completion → PushNotification
+
+### New issue discovered at session end
+- 2023 monthly tile directories exist in GCS (m01-m12, all vars + zarr.json) but NO `.complete` sentinels
+- Old VMs (pre-fix code) wrote data but didn't touch `.complete`
+- `mhw-hycom2023-prep` CRASHED at 22:48 UTC with asyncio loop error
+- **Action needed next session:** `gsutil touch` all 12 2023 monthly sentinels, restart `mhw-hycom2023-prep`
+
+### State at session end (~01:30 UTC 2026-04-19)
+- 2022 monthly: 9 dedicated VMs fetching (m01-m06/m08/m10/m11); m07/m09/m12 via mhw-data-prep sequential; ~0 .complete yet
+- 2023 monthly: data present, .complete MISSING for all 12 months
+- mhw-hycom2023-prep: CRASHED, needs restart after 2023 sentinels fixed
+- mhw-data-prep: RUNNING (PID 937), fetching 2022 m01
+- CronCreate `aeb30b31`: active, will PushNotify on completion
+
+---
+
+## [2026-04-18] Session 12 — P1 resolved, VM monitoring, training deferred to next session
+
+### Actions
+- Checked all 8 VM logs and confirmed processes alive via `pgrep` (all mid-fetch, no stalls)
+- Resolved P1 blocker: confirmed `sea_surface_temperature` present in `ECMWF/ERA5/HOURLY` via GEE service account auth; removed TODO comment from `era5_harvester.py:46`
+- Confirmed WN2 fully complete: both hourly zarrs have `.complete`, both daily zarrs have all 365 day-subdirs (d20220101–d20221231, d20230101–d20231231)
+- Revised training ETA to ~05:30 UTC — user asleep by then; training deferred to next session
+
+### State at session end (04:13 UTC)
+- 8 VMs still running; most fetching ~1.5–2h in; m12 outlier at 3h (alive, just slow)
+- All 3 HYCOM `.complete` sentinels still pending; ERA5 + WN2 sentinels confirmed
+- **Next session: verify sentinels, then launch `train_era5.py --epochs 50`**
+
+---
+
+## [2026-04-18] Session 11 — Two crash bugs fixed, 3 new VMs, training ETA cut by 4h
+
+### Context
+Resumed after /clear. 6 VMs running HYCOM data prep. Checked all logs and found crashes.
+
+### Crashes found and root-caused
+`mhw-data-prep` and `mhw-hycom2022-m7-9` both crashed with `zarr.errors.ContainsArrayError`
+while trying to write HYCOM 2022 m07 concurrently.
+
+**Bug 1 — `_gcs_complete` always returned False (`harvester.py` line 103):**
+zarr v3 never writes `.zmetadata` (which was the sentinel). Confirmed: no `.zmetadata` exists
+on any completed HYCOM month (m01-m10). Idempotency guard was silently dead since zarr v3
+was introduced. Every VM restart re-fetched all months from scratch.
+
+**Bug 2 — TOCTOU race in `_gcs_safe_write` (`harvester.py`):**
+Two VMs both checked `_gcs_complete` → False (because Bug 1), both fetched m07 for 2h,
+both called `_gcs_safe_write`. First writer succeeded. Second writer hit `mode="a"` with
+existing arrays → `ContainsArrayError`. Also found same broken check inlined in
+`era5_harvester.py::fetch_and_cache` (checking `.zmetadata` directly).
+
+### Fixes applied (commit `633d0c8`)
+
+**`harvester.py`:**
+- Added `import zarr.errors`
+- `_gcs_complete`: now checks `.complete` sentinel first, then falls back to
+  `water_v/zarr.json` (covers all HYCOM tiles written before this fix)
+- `_gcs_safe_write`: catches `ContainsArrayError` → if store now complete, return;
+  else delete and retry once. Writes `.complete` sentinel after successful write.
+
+**`era5_harvester.py`:**
+- Imported `_gcs_complete` from `harvester.py`
+- Replaced inline `.zmetadata` check with `_gcs_complete(fs, gcs_uri)`
+
+### GCS remediation
+- Deleted partial m07 (`lat/`, `salinity/`, `water_temp/`, `water_u/` only — missing `water_v/`, `time/`, `depth/`, `lon/`)
+- Wrote `.complete` sentinels for: WN2 2022+2023, ERA5 2022+2023
+- HYCOM monthly tiles (m01-m06, m10-m11 for 2022; m05, m09 for 2023) covered by `water_v/zarr.json` fallback
+
+### VM actions
+- Both crashed VMs (`mhw-data-prep`, `mhw-hycom2022-m7-9`) restarted with new code
+- `mhw-data-prep` confirmed cache-hitting m01-m06 immediately after restart ✓
+- `mhw-hycom2022-m7-9` stopped after confirming it was now redundant (m08+m09 covered by dedicated VMs)
+- `mhw-era5-prep` stopped (ERA5 complete, VM idle)
+- 3 new VMs created from snapshot `mhw-hycom-worker-snap` (from `mhw-hycom2022-m7-9` disk):
+  - `mhw-hycom2022-m8` — HYCOM 2022 m08 only, fetching since 02:37 UTC
+  - `mhw-hycom2022-m9` — HYCOM 2022 m09 only, fetching since ~02:45 UTC
+  - `mhw-hycom2023-m4` — HYCOM 2023 m04 only, fetching since ~02:45 UTC
+- Hit 32/32 CPU quota after first new VM → stopped 2 VMs to free 8 CPUs, then created 2 more
+
+### Training ETA improvement
+- Before: ~09:15 UTC (2022 annual blocked on m07→m08→m09 sequential)
+- After: ~05:15 UTC (m08+m09 written in parallel, mhw-data-prep cache-hits both)
+- Net gain: ~4 hours
+
+### P2 resolved
+HYCOM monthly tile paths confirmed correct in production (no double-slash keys).
+
+---
+
+## [2026-04-17] Session 10 — Code Review Fixes, Gemini Evaluation, Pipeline Monitoring
+
+### Context
+6 parallel HYCOM VMs running. WN2 + ERA5 tiles complete. Enacting pre-/clear protocol.
+
+### VM Events
+- `mhw-hycom2023-prep` PID 983 hung on 2023-m01 for 1h+ (3 log lines, OPeNDAP stall). Killed + restarted as PID 2186 at 20:09 UTC. Fresh logs confirmed.
+- `mhw-wn2-prep` stopped — WN2 2022 + 2023 GCS tiles confirmed complete. VM can be deleted.
+- All 5 HYCOM VMs alive as of ~20:45 UTC, fetching first months, ETAs ~22:00–22:40 UTC.
+
+### Code Fixes Applied (code-reviewer subagent findings)
+
+**`src/ingestion/harvester.py`**
+- Fixed `_fetch_and_write_zarr` (line 571): `_build_dataset` call was missing `gcs_uri` 4th arg added in a prior refactor → would raise `TypeError` on `fetch_ensemble()`. Passed `gcs_uri` to fix.
+
+**`scripts/run_hycom_months_prep.py`**
+- Fixed double-slash bug: `annual_base` had trailing `/` → `month_uri` produced `//monthly/` → GCS key mismatch broke idempotency check with `HYCOMLoader.fetch_and_cache`. Fixed by stripping trailing slash from `annual_base` and using explicit `/` in `month_uri`.
+- Added `GOOGLE_APPLICATION_CREDENTIALS` startup validation check.
+- Added non-overlap comment warning for parallel VM month ranges.
+
+**`src/ingestion/era5_harvester.py`**
+- Added ERA5 HOURLY coverage count check: raises `ValueError` if `n_images < days_in_year * 24` (prevents silent partial-year corruption).
+- Added `TODO` comment on `sea_surface_temperature` band availability in `ECMWF/ERA5/HOURLY` — must verify via `ee.ImageCollection("ECMWF/ERA5/HOURLY").first().bandNames().getInfo()` before training.
+- Fixed docstring: `ECMWF/ERA5/DAILY` → `ECMWF/ERA5/HOURLY`.
+
+**False positive (NOT fixed):** Code reviewer flagged ERA5 off-by-one in date loop (`while d < end_d`). Analysis confirmed correct: `end_d = 2023-01-01` and `d < end_d` correctly includes 2022-12-31. No change.
+
+### Gemini Session 9 Evaluation
+
+| Finding | Action |
+|---------|--------|
+| 2-yr climatology baseline (Critical scientific risk) | Acknowledged. Caveat added to todo + training section. Long-term fix: NOAA OISST v2.1 ≥30yr (P5). Does not block training. |
+| Parallel GCS write race conditions | Addressed via non-overlap comment. Per-VM ranges confirmed non-overlapping. Idempotency is correct via `.zmetadata`. |
+| `.zmetadata`-only idempotency check | Intentional design — `to_zarr(consolidated=True)` writes `.zmetadata` last, making it a reliable sentinel. |
+| payout.py missing | Added as P3 in todo queue (post ERA5 training). |
+| CF-1.8 compliance audit | Added as P4 in todo queue. |
+
+### Config Changes
+- Global `~/.claude/CLAUDE.md`: added caveman default + /clear-every-20-turns recommendation.
+- Project `CLAUDE.md`: added Pre-/clear Protocol section (update todo + recentactions before /clear).
+
+### Priority Queue Written to todo.md
+- P1: Verify SST band in ECMWF/ERA5/HOURLY (blocks training correctness)
+- P2: Spot-check GCS monthly tile paths (confirms double-slash fix in production)
+- P3: Build `payout.py` parametric payout engine
+- P4: CF-1.8 compliance audit of `harmonize()` output
+- P5: NOAA OISST v2.1 ≥30yr climatology (primary scientific validity fix)
+- P6: XAI Option C — member-level attribution variance
+- P7: MTSFT — FFT-enriched Transformer
+- P8: Vertex AI migration
+
+---
+
+## [2026-04-17] Session 9 — Gemini Pipeline Audit (FOR CLAUDE EVALUATION)
+
+### Context
+Gemini performed a multi-agent audit of the GCP data prep pipeline using specialized `@reviewer` and `@scientist` personas.
+
+### Action Required for Claude
+- Evaluate the findings in `mhw_gemini_actions/mhw_gemini_recentactions.md` (Session 9).
+- **Critical**: Address the 2-year vs. 30-year climatology baseline risk flagged by `@scientist`.
+- **Engineering**: Address the parallel GCS write race conditions flagged by `@reviewer` in `scripts/run_hycom_months_prep.py`.
+- **Constraint**: Gemini was restricted to read-only mode; implementation of fixes is deferred to Claude.
+
+---
+
+## [2026-04-17] Session 8 — WN2 complete, ERA5 complete, HYCOM parallelized across 6 VMs
+
+### Context
+Continuing from Session 7. WN2 was crashing mid-run; ERA5 collection was stale (ended 2020).
+This session: fixed both, launched parallel HYCOM month VMs, confirmed WN2+ERA5 complete.
+
+### WN2 per-day crash-safe fix — COMPLETE
+- Root cause: no intermediate saves → any crash forced restart from day 1.
+- Fix in `src/ingestion/harvester.py` `WeatherNext2Harvester._build_dataset()`:
+  - Per-day GCS Zarr writes to `{gcs_uri}_daily/d{YYYYMMDD}/` before accumulating.
+  - `_gcs_complete()` check at loop start → crash-safe resume (cache hits for saved days).
+  - Retries: 3 → 5 attempts; fixed 60s → exponential backoff (60, 120, 240, 480, 960s).
+- Commit: `e5f6e0a`
+
+### WN2 — BOTH YEARS COMPLETE
+- 2022: `gs://mhw-risk-cache/weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr`
+- 2023: `gs://mhw-risk-cache/weathernext2/cache/wn2_2023-01-01_2023-12-31_m64.zarr`
+- Completed: 2026-04-17 ~19:42 UTC on VM `mhw-wn2-prep`
+
+### ERA5 collection fix (ECMWF/ERA5/DAILY → HOURLY) — COMPLETE
+- Root cause: `ECMWF/ERA5/DAILY` ends 2020-07-09 and is no longer updated.
+- Fix in `src/ingestion/era5_harvester.py`:
+  - `GEE_COLLECTION = "ECMWF/ERA5/HOURLY"` (covers 1940–present)
+  - `ERA5_BANDS["temperature_2m"]` key: `"2m_temperature"` (was `"mean_2m_air_temperature"`)
+  - Added `from datetime import date as _date, timedelta`
+  - Rewrote fetch loop: per-day `.filterDate(date_str, next_date_str).mean()` — 24 hourly
+    images averaged server-side → physically equivalent to what ERA5/DAILY computed.
+  - Added `logger.info("ERA5 fetched %s (%d/%d)", ...)` per-day progress logging.
+- `scripts/run_era5_prep.py`: added explicit `era5.authenticate()` call before year loop.
+- Commit: `056bc47`
+
+### ERA5 — BOTH YEARS COMPLETE
+- 2022: `gs://mhw-risk-cache/era5/2022/.zmetadata`
+- 2023: `gs://mhw-risk-cache/era5/2023/.zmetadata`
+- Completed: 2026-04-17 ~19:17 UTC on VM `mhw-era5-prep`
+
+### HYCOM parallelization — 4 new VMs launched
+- Added `scripts/run_hycom_months_prep.py`: fetches a configurable month range for any year.
+  - Reads `HYCOM_YEAR`, `HYCOM_START_MONTH`, `HYCOM_END_MONTH` from env.
+  - Calls `fetch_tile()` + `_gcs_safe_write()` directly → per-month idempotent GCS writes.
+  - Does NOT assemble annual tile (left to sequential VM's `fetch_and_cache()`).
+- Commit: `4d37b06`
+- Four new VMs created from `mhw-wn2-snap`, all RUNNING as of session end:
+
+| VM | HYCOM_YEAR | START_MONTH | END_MONTH | First month started |
+|----|-----------|-------------|-----------|---------------------|
+| `mhw-hycom2022-m7-9` | 2022 | 7 | 9 | m07 @ 19:36 |
+| `mhw-hycom2022-m10-12` | 2022 | 10 | 12 | m10 @ 19:36 |
+| `mhw-hycom2023-m5-8` | 2023 | 5 | 8 | m05 @ 19:36 |
+| `mhw-hycom2023-m9-12` | 2023 | 9 | 12 | m09 @ 19:36 |
+
+- Sequential VMs `mhw-data-prep` (2022) and `mhw-hycom2023-prep` (2023) continue running.
+  They will assemble the annual Zarr tiles once all months are cached.
+
+### HYCOM progress as of session end
+- 2022: months 1-6 complete; months 7-9 and 10-12 now fetching in parallel.
+  - m07 overlap between `mhw-data-prep` and `mhw-hycom2022-m7-9` is benign (idempotent write).
+- 2023: month 1 in progress on `mhw-hycom2023-prep`; months 5-8 and 9-12 on parallel VMs.
+
+### New scripts committed this session
+- `scripts/run_hycom_months_prep.py` (commit `4d37b06`)
+- `scripts/run_era5_prep.py` (commits `8e38f0d`, `e0bb541`, `6e37e54`)
+- `scripts/run_hycom2023_prep.py` (commit `a890d49`)
+
+---
+
 ## [2026-04-17] Session 7 — WN2 infrastructure complete, second VM running, both data preps active
 
 ### Context

@@ -1,5 +1,15 @@
 # MHW Gemini Recent Actions
 
+- [2026-04-20] **Session 17 — Scientific Critique of Training Strategy & WN2 Plan:**
+    - **Scientific Review (@scientist):** Flagged the **2-year climatology baseline (2022-2023)** as a critical failure in scientific integrity. Explained that a 90th percentile from 2 samples is effectively the maximum, rendering MHW detection and SDD/SVaR results mathematically meaningless.
+    - **Technical Review (@reviewer):** Identified three "blocker" flaws in Claude's WN2 fix plan: (1) **Cache Poisoning** due to persistent `_daily/` GCS subdirectories, (2) **Land Mask Inconsistency** between SST and atmospheric variables, and (3) **Unit Mismatch** (Kelvin vs Celsius) between WN2 and HYCOM.
+    - **Action Taken:** Created `mhw_gemini_actions/mhw_gemini_scientific_critique_v1.md` with detailed recommendations.
+    - **Intervention:** Prepended a 🛑 **CRITICAL** warning to `mhw_claude_todo.md` directing Claude to the critique before proceeding with WN2 training.
+- [2026-04-17] **Session 9 — Automated Agent Validation & Pipeline Audit:**
+    - **Agent Deployment**: Initialized and released `@scientist`, `@reviewer`, `@ingestor`, and `@auditor` subagents in `.gemini/agents/`.
+    - **Engineering Audit (@reviewer)**: Identified high-risk race conditions in `scripts/run_hycom_months_prep.py` due to lack of coordination for parallel GCS writes. Flagged brittle idempotency checks in `harvester.py` relying solely on `.zmetadata`.
+    - **Scientific Audit (@scientist)**: Validated Hobday (2016) compliance for MHW/SDD logic. Identified **Critical Scientific Risk**: The 2-year climatology baseline (2022-2023) used in `run_data_prep.py` is statistically insufficient for production; recommended 10-30 year baseline extension.
+    - **Read-Only Enforcement**: Confirmed all audits performed in read-only mode; no code modifications were applied.
 - [2026-04-14] **Review of Proxy Training and XAI (Claude):** Validated Claude's Session 2 artifacts and `scripts/compare_xai.py` implementation.
     - **Convergence:** Confirmed `train_era5.py` dry-run (30 epochs) achieved significant loss reduction (train: 122→66; val: 105→57), indicating model capacity to learn from synthetic features.
     - **Artifacts:** Verified generation of diagnostic plots (`loss_curve`, `svar_curve`, `gate_hist`, `pred_vs_actual`) and `era5_svar.zarr` via the new synthetic inference path.
