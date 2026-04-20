@@ -16,7 +16,7 @@ Required environment variables:
 Usage:
     export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json
     export MHW_GCS_BUCKET=gs://your-bucket-name
-    python scripts/run_wn2_prep.py
+    python scripts/run_wn2_prep.py [--year 2022]   # omit to run both years
 
 Expected output:
     [1/2] WN2 tiles 2022 -> gs://bucket/weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr  OK
@@ -27,6 +27,7 @@ Estimated runtime: ~55 min/year on e2-standard-4 (GEE sampleRectangle, 64 member
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -47,6 +48,11 @@ YEARS = (2022, 2023)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, default=None,
+                        help="Single year to fetch (2022 or 2023). Omit to run both.")
+    args = parser.parse_args()
+
     bucket = os.environ.get("MHW_GCS_BUCKET", "").rstrip("/")
     if not bucket:
         raise RuntimeError("MHW_GCS_BUCKET env var not set.")
@@ -57,11 +63,13 @@ def main() -> None:
         service_account_key=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
     )
 
-    for step, year in enumerate(YEARS, start=1):
+    years = (args.year,) if args.year else YEARS
+    for step, year in enumerate(years, start=1):
         gcs_uri = f"{bucket}/weathernext2/cache/wn2_{year}-01-01_{year}-12-31_m64.zarr"
-        print(f"[{step}/2] WN2 tiles {year} -> {gcs_uri}", flush=True)
+        total = len(years)
+        print(f"[{step}/{total}] WN2 tiles {year} -> {gcs_uri}", flush=True)
         wn2.fetch_and_cache(year, BBOX, gcs_uri)
-        print(f"[{step}/2] WN2 tiles {year}  OK", flush=True)
+        print(f"[{step}/{total}] WN2 tiles {year}  OK", flush=True)
 
     print("WN2 data prep complete.", flush=True)
 
