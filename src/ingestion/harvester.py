@@ -179,8 +179,7 @@ WN2_VARIABLES = [
     "10m_u_component_of_wind", # [m/s] Zonal wind — drives Ekman pumping and vertical mixing
     "10m_v_component_of_wind", # [m/s] Meridional wind — completes horizontal wind vector
     "mean_sea_level_pressure",  # [Pa] MSLP — identifies anticyclonic blocking that suppresses mixing
-    # sea_surface_temperature excluded: WN2 SST is masked over land, returning defaultValue=0
-    # for ~25% of the GoM bbox (coastline pixels). HYCOM is the authoritative SST source.
+    "sea_surface_temperature",  # [K] SST — primary MHW driver; land pixels (defaultValue=0) masked to NaN in _build_dataset()
 ]
 
 HYCOM_VARIABLES = [
@@ -546,6 +545,8 @@ class WeatherNext2Harvester:
                     for m in range(n_members)
                 ]
                 arr = np.array(member_arrays, dtype=np.float32)  # (n_members, n_lat, n_lon)
+                if var == "sea_surface_temperature":
+                    arr[arr == 0.0] = np.nan  # land pixels use defaultValue=0; mask to NaN
                 data_vars_day[var] = (["member", "latitude", "longitude"], arr)
 
             ds_day = xr.Dataset(

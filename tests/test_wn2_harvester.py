@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from src.ingestion.harvester import WeatherNext2Harvester
+from src.ingestion.harvester import WeatherNext2Harvester, WN2_VARIABLES
 
 
 def _make_fake_ds(n_members: int = 64, n_days: int = 5) -> xr.Dataset:
@@ -182,3 +182,68 @@ class TestFetchEnsembleFilters:
         h = WeatherNext2Harvester(gcs_bucket="my-bucket")
         with pytest.raises(RuntimeError, match="authenticate()"):
             h.fetch_ensemble("2022-01-01", "2023-01-01", (-71.0, 41.0, -66.0, 45.0))
+
+
+class TestWN2Variables:
+    def test_wn2_variables_includes_sst(self):
+        """WN2_VARIABLES must include sea_surface_temperature for ensemble spread."""
+        assert "sea_surface_temperature" in WN2_VARIABLES
+
+
+class TestBuildDatasetSSTNaNMask:
+    def test_sst_zero_pixels_masked_to_nan(self):
+        """_build_dataset masks SST pixels == 0.0 to NaN (land defaultValue)."""
+        h = WeatherNext2Harvester(gcs_bucket="my-bucket")
+        h._ee_initialized = True
+
+        n_members = 2
+        n_lat, n_lon = 2, 3
+        start_compact = "202201010000"
+        end_compact   = "202201020000"
+
+        atm_val = np.full((n_lat, n_lon), 273.0, dtype=np.float32)
+        sst_vals = np.array([[270.0, 0.0, 275.0],
+                             [0.0,   280.0, 0.0]], dtype=np.float32)
+
+        props = {}
+        for m in range(n_members):
+            for var in ["2m_temperature", "10m_u_component_of_wind",
+                        "10m_v_component_of_wind", "mean_sea_level_pressure"]:
+                props[f"{start_compact}_{end_compact}_{m}_{var}"] = atm_val.tolist()
+            props[f"{start_compact}_{end_compact}_{m}_sea_surface_temperature"] = sst_vals.tolist()
+
+        mock_collection = MagicMock()
+        mock_collection.aggregate_array.return_value.getInfo.return_value = [
+            "2022-01-01T00:00:00Z", "2022-01-01T00:00:00Z",
+        ]
+
+        mock_region = MagicMock()
+        mock_region.bounds.return_value.getInfo.return_value = {
+            "coordinates": [[[-71.0, 25.0], [-71.0, 31.0], [-65.0, 31.0], [-65.0, 25.0]]]
+        }
+
+        combined_mock = MagicMock()
+        combined_mock.sampleRectangle.return_value.getInfo.return_value = {"properties": props}
+
+        with patch("src.ingestion.harvester.ee") as mock_ee, \
+             patch("src.ingestion.harvester.gcsfs.GCSFileSystem"), \
+             patch("src.ingestion.harvester._gcs_complete", return_value=False), \
+             patch("src.ingestion.harvester._gcs_safe_write"):
+            day_coll_mock = MagicMock()
+            day_coll_mock.select.return_value.toBands.return_value = combined_mock
+            (mock_ee.ImageCollection.return_value
+             .filter.return_value.filter.return_value.filter.return_value
+             .map.return_value.sort.return_value.limit.return_value) = day_coll_mock
+
+            ds = h._build_dataset(
+                collection=mock_collection,
+                region=mock_region,
+                n_members=n_members,
+                gcs_uri="gs://my-bucket/wn2_2022.zarr",
+            )
+
+        # dims: (time=1, member=2, lat=2, lon=3); drop time → (member, lat, lon)
+        sst = ds["sea_surface_temperature"].values[0]
+        for m in range(n_members):
+            assert np.all(np.isnan(sst[m][sst_vals == 0.0])), f"member {m}: land pixels not NaN"
+            assert np.all(np.isfinite(sst[m][sst_vals != 0.0])), f"member {m}: valid pixels unexpectedly NaN"
