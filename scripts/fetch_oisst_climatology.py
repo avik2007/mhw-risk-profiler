@@ -53,8 +53,9 @@ GoM_LON_MAX = -66.0
 GoM_LAT_MIN =  41.0
 GoM_LAT_MAX =  45.0
 
-OISST_THREDDS_BASE = (
-    "https://www.ncei.noaa.gov/thredds/dodsC/OisstBase/NetCDF/V2.1/AVHRR"
+OISST_BASE_URL = (
+    "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation"
+    "/v2.1/access/avhrr"
 )
 
 
@@ -79,7 +80,7 @@ def build_oisst_url(year: int, month: int, day: int) -> str:
     """
     ym  = f"{year}{month:02d}"
     ymd = f"{year}{month:02d}{day:02d}"
-    return f"{OISST_THREDDS_BASE}/{ym}/oisst-avhrr-v02r01.{ymd}.nc"
+    return f"{OISST_BASE_URL}/{ym}/oisst-avhrr-v02r01.{ymd}.nc"
 
 
 # ---------------------------------------------------------------------------
