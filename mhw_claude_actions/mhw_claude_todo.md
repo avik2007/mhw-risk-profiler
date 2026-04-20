@@ -17,11 +17,18 @@ Two parallel tracks. Track A code DONE. Track B code is next session's first tas
 
 - [x] **A1 DONE** — `compute_climatology()` updated with `window=11` rolling (commit `019bdb3`)
 - [x] **A2 DONE** — `fetch_oisst_climatology.py` written + 6 tests (commit `d6b0584`)
-- [ ] **A3 IN PROGRESS** — OISST fetch running on VM (mhw-data-prep), ETA ~1.5hr from last launch
-  - 3 URL/engine bugs fixed (commits `b19c1bf`, `7217a55`, `9499c64`, `e7116ed`)
-  - Uses direct HTTPS + tempfile + 6-worker parallel month fetch
-  - Monitor: `gcloud compute ssh mhw-data-prep --zone=us-central1-a -- "tail -20 ~/nohup_oisst.log"`
-  - Verify complete: `gsutil ls gs://mhw-risk-cache/hycom/climatology/.complete`
+- [ ] **A3 BLOCKED — OISST still failing** — "No OISST data fetched" after 4 fixes
+  - Need: `grep "ERROR Failed 1982" ~/nohup_oisst.log | head -3` on VM to see actual per-month error
+  - Previous fixes: THREDDS→direct HTTPS, BytesIO→tempfile, parallel workers
+  - Next session: diagnose actual error from that grep, fix, re-run
+  - VM command to re-run after fix:
+    ```bash
+    git pull && nohup env \
+      GOOGLE_APPLICATION_CREDENTIALS=/home/avik2007/.config/gcp-keys/mhw-harvester.json \
+      MHW_GCS_BUCKET=gs://mhw-risk-cache \
+      /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/fetch_oisst_climatology.py \
+      >> ~/nohup_oisst.log 2>&1 </dev/null & disown $!
+    ```
 
 ---
 
