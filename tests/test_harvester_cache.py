@@ -42,16 +42,16 @@ class TestHYCOMLoaderFetchAndCache:
             loader.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/hycom/tiles/2022/")
             mock_fetch.assert_not_called()
 
-    def test_cache_hit_checks_zmetadata(self):
-        """Cache hit check uses .zmetadata, not bare directory existence."""
+    def test_cache_hit_checks_complete_sentinel(self):
+        """Cache hit check uses .complete sentinel, not bare directory existence."""
         loader = HYCOMLoader()
         with patch("src.ingestion.harvester.gcsfs.GCSFileSystem") as mock_fs_cls, \
              patch.object(loader, "fetch_tile"):
             mock_fs_cls.return_value.exists.return_value = True
             loader.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/hycom/tiles/2022/")
-            # First exists() call must check the annual .zmetadata
+            # First exists() call must check the annual .complete sentinel
             first_checked = mock_fs_cls.return_value.exists.call_args_list[0].args[0]
-            assert first_checked == "bucket/hycom/tiles/2022/.zmetadata"
+            assert first_checked == "bucket/hycom/tiles/2022/.complete"
 
     def test_cache_miss_fetches_all_twelve_months(self):
         """On a full cache miss, fetch_tile() is called once per month with correct date ranges."""
@@ -96,10 +96,10 @@ class TestHYCOMLoaderFetchAndCache:
 
         def exists_side_effect(path: str) -> bool:
             # Annual store is incomplete; months 1-6 are already done.
-            if path.endswith("tiles/2022/.zmetadata"):
+            if path.endswith("tiles/2022/.complete"):
                 return False
-            if "monthly/m" in path and path.endswith(".zmetadata"):
-                month = int(path.rstrip("/.zmetadata").split("/m")[-1])
+            if "monthly/m" in path and path.endswith(".complete"):
+                month = int(path.rstrip("/.complete").split("/m")[-1])
                 return month <= 6
             return False
 
@@ -141,8 +141,8 @@ class TestERA5HarvesterFetchAndCache:
             harvester.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/era5/2022/")
             mock_fetch.assert_not_called()
 
-    def test_cache_hit_checks_zmetadata(self):
-        """Cache hit check uses .zmetadata, not bare directory existence."""
+    def test_cache_hit_checks_complete_sentinel(self):
+        """Cache hit check uses .complete sentinel, not bare directory existence."""
         harvester = ERA5Harvester()
         harvester._initialized = True
         with patch("src.ingestion.era5_harvester.gcsfs.GCSFileSystem") as mock_fs_cls, \
@@ -150,7 +150,7 @@ class TestERA5HarvesterFetchAndCache:
             mock_fs_cls.return_value.exists.return_value = True
             harvester.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://bucket/era5/2022/")
             checked_path = mock_fs_cls.return_value.exists.call_args_list[0].args[0]
-            assert checked_path == "bucket/era5/2022/.zmetadata"
+            assert checked_path == "bucket/era5/2022/.complete"
 
     def test_cache_miss_calls_fetch_and_writes(self):
         """On a cache miss, fetch() is called with inclusive year range and result written to GCS."""

@@ -32,8 +32,8 @@ class TestFetchAndCacheCacheHit:
             h.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://my-bucket/wn2/2022/")
             mock_build.assert_not_called()
 
-    def test_cache_hit_checks_zmetadata_path(self):
-        """Cache check uses .zmetadata (completeness marker), not bare directory."""
+    def test_cache_hit_checks_complete_sentinel(self):
+        """Cache check uses .complete sentinel, not bare directory."""
         h = WeatherNext2Harvester(gcs_bucket="my-bucket")
         h._ee_initialized = True
         with patch("src.ingestion.harvester.gcsfs.GCSFileSystem") as mock_fs_cls, \
@@ -41,7 +41,7 @@ class TestFetchAndCacheCacheHit:
             mock_fs_cls.return_value.exists.return_value = True
             h.fetch_and_cache(2022, (-71.0, 41.0, -66.0, 45.0), "gs://my-bucket/wn2/2022/")
             checked = mock_fs_cls.return_value.exists.call_args_list[0].args[0]
-            assert checked == "my-bucket/wn2/2022/.zmetadata"
+            assert checked == "my-bucket/wn2/2022/.complete"
 
 
 class TestFetchAndCacheCacheMiss:

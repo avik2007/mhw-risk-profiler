@@ -1044,19 +1044,32 @@ class DataHarmonizer:
             - The 'member' dimension is essential: downstream SVaR is estimated
               from the empirical quantiles of the 64-member SDD distribution.
         """
-        logger.info("Regridding WeatherNext 2 to 0.25-degree target grid.")
+        # Clip global TARGET grids to the union bbox of the input data.
+        # Without this, interp() expands a 4×5 GoM tile to a 721×1440 global
+        # array — expand_and_perturb then produces ~485 GB and OOM-kills.
+        lat_min = float(min(wn2_ds.latitude.min(), hycom_ds.lat.min()))
+        lat_max = float(max(wn2_ds.latitude.max(), hycom_ds.lat.max()))
+        lon_min = float(min(wn2_ds.longitude.min(), hycom_ds.lon.min()))
+        lon_max = float(max(wn2_ds.longitude.max(), hycom_ds.lon.max()))
+        target_lat = TARGET_LAT[(TARGET_LAT >= lat_min) & (TARGET_LAT <= lat_max)]
+        target_lon = TARGET_LON[(TARGET_LON >= lon_min) & (TARGET_LON <= lon_max)]
+
+        logger.info(
+            "Regridding WeatherNext 2 to 0.25-degree target grid (bbox %.2f–%.2f°N, %.2f–%.2f°E).",
+            lat_min, lat_max, lon_min, lon_max,
+        )
         wn2_regridded = wn2_ds.interp(
-            latitude=TARGET_LAT, longitude=TARGET_LON, method="linear"
+            latitude=target_lat, longitude=target_lon, method="linear"
         )
 
         # Auto-expand single-member input (ERA5 proxy path)
-        if wn2_regridded.dims.get("member", 1) == 1:
+        if wn2_regridded.sizes.get("member", 1) == 1:
             logger.info("member=1 detected — expanding to 64 synthetic members.")
             wn2_regridded = DataHarmonizer.expand_and_perturb(wn2_regridded)
 
         logger.info("Regridding HYCOM to 0.25-degree target grid.")
         hycom_regridded = hycom_ds.interp(
-            lat=TARGET_LAT, lon=TARGET_LON, method="linear"
+            lat=target_lat, lon=target_lon, method="linear"
         ).rename({"lat": "latitude", "lon": "longitude"})
 
         # Broadcast HYCOM across the member dimension
