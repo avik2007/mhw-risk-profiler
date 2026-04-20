@@ -26,6 +26,7 @@ import calendar
 import logging
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import gcsfs
@@ -186,17 +187,33 @@ def main() -> None:
         logger.info("OISST climatology already complete at %s — nothing to do.", clim_uri)
         return
 
-    logger.info("Fetching OISST v2.1 %d–%d for GoM bbox...", CLIM_START_YEAR, CLIM_END_YEAR)
-    monthly_slabs: list[xr.DataArray] = []
+    all_months = [
+        (y, m)
+        for y in range(CLIM_START_YEAR, CLIM_END_YEAR + 1)
+        for m in range(1, 13)
+    ]
+    logger.info(
+        "Fetching OISST v2.1 %d–%d for GoM bbox — %d months, 6 parallel workers...",
+        CLIM_START_YEAR, CLIM_END_YEAR, len(all_months),
+    )
 
-    for year in range(CLIM_START_YEAR, CLIM_END_YEAR + 1):
-        for month in range(1, 13):
-            logger.info("Fetching %d-%02d...", year, month)
+    # Fetch months in parallel; results keyed by (year, month) to preserve order.
+    # max_workers=6: empirically safe for NCEI THREDDS without triggering rate limits.
+    results: dict[tuple[int, int], xr.DataArray] = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        future_to_ym = {
+            pool.submit(fetch_oisst_gom, y, m): (y, m)
+            for y, m in all_months
+        }
+        for future in as_completed(future_to_ym):
+            ym = future_to_ym[future]
             try:
-                slab = fetch_oisst_gom(year, month)
-                monthly_slabs.append(slab)
+                results[ym] = future.result()
+                logger.info("Fetched %d-%02d (%d/%d done)", ym[0], ym[1], len(results), len(all_months))
             except Exception as exc:
-                logger.error("Failed %d-%02d: %s — skipping", year, month, exc)
+                logger.error("Failed %d-%02d: %s — skipping", ym[0], ym[1], exc)
+
+    monthly_slabs = [results[ym] for ym in all_months if ym in results]
 
     if not monthly_slabs:
         raise RuntimeError("No OISST data fetched — check THREDDS URL and network access.")
