@@ -89,3 +89,30 @@ class TestComputeClimatology:
                                 coords={"time": times, "lat": [42.0], "lon": [-70.0]})
         clim = compute_climatology(sst_hist, percentile=90)
         np.testing.assert_allclose(clim.values, 20.0, atol=1e-4)
+
+    def test_rolling_window_smooths_spike(self):
+        """11-day window must spread a Jan 1 spike across adjacent days."""
+        rng = np.random.default_rng(0)
+        times = xr.date_range("2000-01-01", periods=365 * 5, freq="D", use_cftime=True)
+        data = rng.normal(20.0, 1.0, (365 * 5, 2, 2)).astype("float32")
+        sst = xr.DataArray(data, dims=["time", "lat", "lon"],
+                           coords={"time": times, "lat": [42.0, 42.25], "lon": [-70.0, -69.75]})
+        # Extreme spike on every Jan 1 → sharp edge in raw (window=1) threshold
+        sst.values[::365] = 999.0
+
+        raw    = compute_climatology(sst, percentile=90.0, window=1)
+        smooth = compute_climatology(sst, percentile=90.0, window=11)
+
+        # Spike is spread out: smoothed day 1 lower, smoothed day 6 higher than raw
+        assert float(smooth.sel(dayofyear=1).mean()) < float(raw.sel(dayofyear=1).mean())
+        assert float(smooth.sel(dayofyear=6).mean()) > float(raw.sel(dayofyear=6).mean())
+
+    def test_rolling_window_no_nan_at_boundaries(self):
+        """Wrap-around rolling must not produce NaN at day 1 or day 365."""
+        rng = np.random.default_rng(1)
+        times = xr.date_range("2000-01-01", periods=365 * 5, freq="D", use_cftime=True)
+        data = rng.normal(20.0, 1.0, (365 * 5, 2, 2)).astype("float32")
+        sst = xr.DataArray(data, dims=["time", "lat", "lon"],
+                           coords={"time": times, "lat": [42.0, 42.25], "lon": [-70.0, -69.75]})
+        threshold = compute_climatology(sst, percentile=90.0, window=11)
+        assert not bool(np.isnan(threshold.values).any()), "No NaN after wrap-around rolling"

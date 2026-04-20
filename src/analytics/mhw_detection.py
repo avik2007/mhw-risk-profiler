@@ -33,34 +33,54 @@ import xarray as xr
 def compute_climatology(
     sst_historical: xr.DataArray,
     percentile: float = 90.0,
+    window: int = 11,
 ) -> xr.DataArray:
     """
     Compute the climatological SST percentile threshold for each calendar day.
 
-    Groups historical SST by day-of-year and computes the requested percentile
-    at each grid point, producing the Hobday et al. baseline threshold array.
+    Groups historical SST by day-of-year, computes the requested percentile,
+    then applies a centered rolling window along the dayofyear axis to smooth
+    the daily threshold curve. The window uses circular wrap-around so that
+    day 1 neighbours day 365, avoiding NaN at year boundaries.
 
     Parameters
     ----------
     sst_historical : xr.DataArray
         Historical daily SST [°C], dims (time, lat, lon).
-        Should cover ≥ 3 years for stable percentile estimates.
-        Recommended: 1982–2011 (30-year WMO standard period).
+        Should cover ≥ 30 years for Hobday (2016) compliance.
+        Recommended: 1982–2011 (NOAA OISST v2.1).
     percentile : float
         Percentile to compute. Default 90 per Hobday et al. (2016) Category I.
+    window : int
+        Centered rolling window width [days] applied along the dayofyear axis.
+        11 is the Hobday (2016) standard. Set to 1 to disable smoothing.
 
     Returns
     -------
     threshold : xr.DataArray
-        90th-percentile SST [°C] for each calendar day.
+        Smoothed percentile SST [°C] for each calendar day.
         Dims: (dayofyear=365, lat, lon).
-        Index dayofyear runs 1–365; day 366 (leap) is omitted by groupby convention.
+        Index dayofyear runs 1–365; day 366 (leap) omitted by groupby convention.
     """
+    from scipy.ndimage import uniform_filter1d
+
     grouped = sst_historical.groupby("time.dayofyear")
-    threshold = grouped.quantile(percentile / 100.0, dim="time")
+    raw = grouped.quantile(percentile / 100.0, dim="time")
     # groupby().quantile() adds a 'quantile' coordinate — drop it
-    threshold = threshold.drop_vars("quantile")
-    return threshold  # dims: (dayofyear, lat, lon)
+    raw = raw.drop_vars("quantile")
+
+    if window <= 1:
+        return raw  # dims: (dayofyear, lat, lon)
+
+    # Centered rolling mean with circular wrap so day 365 neighbours day 1
+    smoothed_vals = uniform_filter1d(raw.values, size=window, axis=0, mode="wrap")
+
+    return xr.DataArray(
+        smoothed_vals,
+        dims=raw.dims,
+        coords=raw.coords,
+        attrs={**raw.attrs, "rolling_window_days": window},
+    )
 
 
 def compute_mhw_mask(
