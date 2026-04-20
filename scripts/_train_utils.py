@@ -125,11 +125,10 @@ def build_tensors(
     if "lon" in threshold.dims:
         rename_map["lon"] = "longitude"
     threshold_regrid = threshold.rename(rename_map) if rename_map else threshold
-    if (threshold_regrid.latitude != merged.latitude).any() or \
-       (threshold_regrid.longitude != merged.longitude).any():
-        threshold_regrid = threshold_regrid.interp(
-            latitude=merged.latitude, longitude=merged.longitude
-        )
+    # Always interp to exact merged grid (pass .values to avoid DataArray dim metadata issues)
+    threshold_regrid = threshold_regrid.interp(
+        latitude=merged.latitude.values, longitude=merged.longitude.values
+    )
 
     mhw_mask = compute_mhw_mask(sst_celsius, threshold_regrid)
     sdd_phys = accumulate_sdd(sst_celsius, threshold_regrid, mhw_mask)  # (member, lat, lon)
