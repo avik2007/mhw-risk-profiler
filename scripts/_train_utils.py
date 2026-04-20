@@ -114,9 +114,25 @@ def build_tensors(
     ).astype(np.float32)  # (member, seq_len, 5)
 
     # SDD label: convert SST from K to deg C before physics computation
-    sst_celsius = merged["sea_surface_temperature"] - 273.15  # (member, time, lat, lon)
-    mhw_mask    = compute_mhw_mask(sst_celsius, threshold)
-    sdd_phys    = accumulate_sdd(sst_celsius, threshold, mhw_mask)  # (member, lat, lon)
+    sst_celsius = merged["sea_surface_temperature"] - 273.15  # (member, time, latitude, longitude)
+
+    # Threshold is saved from HYCOM tiles using 'lat'/'lon' at 0.08° resolution.
+    # Rename and interpolate to match merged's 'latitude'/'longitude' at 0.25° target grid.
+    # Without this, xarray outer-products (17×21) × (101×63) → ~15 GB and OOM.
+    rename_map = {}
+    if "lat" in threshold.dims:
+        rename_map["lat"] = "latitude"
+    if "lon" in threshold.dims:
+        rename_map["lon"] = "longitude"
+    threshold_regrid = threshold.rename(rename_map) if rename_map else threshold
+    if (threshold_regrid.latitude != merged.latitude).any() or \
+       (threshold_regrid.longitude != merged.longitude).any():
+        threshold_regrid = threshold_regrid.interp(
+            latitude=merged.latitude, longitude=merged.longitude
+        )
+
+    mhw_mask = compute_mhw_mask(sst_celsius, threshold_regrid)
+    sdd_phys = accumulate_sdd(sst_celsius, threshold_regrid, mhw_mask)  # (member, lat, lon)
     label_arr   = sdd_phys.mean(dim=["latitude", "longitude"]).values.astype(np.float32)  # (member,)
 
     hycom_t = torch.from_numpy(hycom_arr).unsqueeze(0)   # (1, M, 11, 4)
