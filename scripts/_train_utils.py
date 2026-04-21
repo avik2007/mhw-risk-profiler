@@ -11,10 +11,11 @@ All spatial indexing here must use these names.
 
 SST unit convention
 -------------------
-WN2 and ERA5 SST are in Kelvin. accumulate_sdd() expects degrees C.
-build_tensors() subtracts 273.15 before computing the SDD label.
-The WN2/ERA5 tensor passed to the model retains original units (K) —
-the model learns from whatever units it sees during training.
+SDD label uses HYCOM water_temp[depth=0] (already in °C, full GoM ocean coverage).
+ERA5/WN2 sea_surface_temperature is in Kelvin and used only as a model input feature —
+it is NOT used for SDD label computation (ERA5 SST covers only ~20/357 GoM cells;
+the rest are fill-value extrapolation that collapses spatial mean to ~0).
+The WN2/ERA5 tensor passed to the model retains original units (K).
 """
 from __future__ import annotations
 
@@ -78,8 +79,8 @@ def build_tensors(
     ----------
     merged : xr.Dataset
         Output of DataHarmonizer.harmonize(). Must have:
-        - WN2 vars: dims (member, time, latitude, longitude), SST in Kelvin
-        - HYCOM vars: dims (member, time, depth, latitude, longitude)
+        - WN2 vars: dims (member, time, latitude, longitude), SST in Kelvin (model input only)
+        - HYCOM vars: dims (member, time, depth, latitude, longitude), water_temp in °C
         - Coordinate names: 'latitude' and 'longitude'
     threshold : xr.DataArray
         Climatological SST threshold [deg C], dims (dayofyear, latitude, longitude).
@@ -113,8 +114,10 @@ def build_tensors(
         axis=-1,
     ).astype(np.float32)  # (member, seq_len, 5)
 
-    # SDD label: convert SST from K to deg C before physics computation
-    sst_celsius = merged["sea_surface_temperature"] - 273.15  # (member, time, latitude, longitude)
+    # SDD label: HYCOM surface layer (depth=0), already in °C, full GoM ocean coverage.
+    # ERA5 sea_surface_temperature covers only ~20/357 GoM cells (rest are fill extrapolation)
+    # and would collapse the spatial mean to ~0 — do NOT use it for the label.
+    sst_celsius = merged["water_temp"].isel(depth=0)  # (member, time, latitude, longitude), °C
 
     # Threshold is saved from HYCOM tiles using 'lat'/'lon' at 0.08° resolution.
     # Rename and interpolate to match merged's 'latitude'/'longitude' at 0.25° target grid.
