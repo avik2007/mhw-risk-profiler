@@ -29,9 +29,13 @@ Two parallel tracks. Track A code DONE. Track B code is next session's first tas
   - `sea_surface_temperature` re-added to WN2_VARIABLES; `arr[arr == 0.0] = np.nan` in inner loop
   - `test_wn2_variables_includes_sst` + `test_sst_zero_pixels_masked_to_nan` added; 78/78 pass
 
-- [ ] **B2 IN PROGRESS** — WN2 2022→2023 sequential in tmux `wn2` (local), days 1-45 cache hits, fetching from day 46
-  - Monitor: `tmux attach -t wn2` or `tail -f ~/nohup_wn2_2022.log`
-  - ETA: ~48 min each (320 remaining days × ~9s/day)
+- [ ] **B2 BLOCKED — WN2 zarr silent write failure**
+  - Log shows 113/365 days fetched for 2022, but `gsutil ls -r gs://mhw-risk-cache/weathernext2/cache/wn2_2022*.zarr/` returns ZERO objects
+  - `gcsfs.ls()` shows HNS directory nodes but no actual chunk files — write is failing silently
+  - `zarr.open_group()` fails: "No group found in store" (no `.zgroup` or `zarr.json` metadata at root)
+  - Need: read `src/ingestion/wn2_harvester.py` `fetch_and_cache()` to find why zarr write succeeds silently without writing objects
+  - Diagnosis: check if `to_zarr` is writing but GCS path or append mode is wrong; check if `_gcs_safe_write` vs direct `to_zarr` is being used
+  - After fix: delete partial zarr stores and re-run from scratch in tmux `wn2`
 
 - [ ] **B3 VM** — After A3 + B2 both complete:
   - Retrain ERA5 with new 30yr threshold: `train_era5.py --epochs 50`

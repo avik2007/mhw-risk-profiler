@@ -4,6 +4,21 @@
 
 ---
 
+## [2026-04-20] Session 21 — A3 fixed (ERDDAP); WN2 zarr silent-write bug discovered
+
+### What happened
+- **A3 ROOT CAUSE FOUND**: two bugs in `fetch_oisst_climatology.py`:
+  1. 10,800 per-day NCEI global downloads (1.7 MB each) → NCEI rate-limits after N requests → returns HTML with status 200 → HDF error on tempfile
+  2. OISST native lon is 0-360; `sel(lon=slice(-71,-66))` returned empty data silently
+- **A3 FIX** (commit `ed131ee`): switched to ERDDAP griddap `ncdcOisst21Agg_LonPM180` — 30 annual requests × ~500 KB GoM subset; server-side spatial filter; -180/180 lon convention; Content-Type guard
+- **A3 DONE**: climatology written to `gs://mhw-risk-cache/hycom/climatology/` at 23:13
+- **B2 INVESTIGATION**: WN2 log shows 113/365 days "fetched" for 2022, but `gsutil ls -r` on zarr path returns NO objects — zarr write is failing silently. `gcsfs.ls()` shows HNS directory nodes (not real data files). 2022 + 2023 zarr stores have zero actual chunks on GCS.
+- **B2 STATUS**: NOT DONE — need to diagnose and fix silent zarr write failure, then re-run
+
+### Key decisions
+- ERDDAP griddap is the correct pattern for all NCEI OISST access — never use per-day direct HTTPS
+- `gsutil ls -r` is authoritative for GCS content; `gcsfs.ls()` can return false positives on HNS buckets
+
 ## [2026-04-20] Session 20 — OISST fetch debugging; WN2 resume; 3 URL/engine fixes
 
 ### What happened
