@@ -164,6 +164,7 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-04-20] OISST per-day NCEI direct downloads (10800 requests × 1.7 MB global files) triggers rate limiting returning HTML with status 200 — use ERDDAP griddap server-side subset (30 annual requests × ~500 KB GoM slice)
 [2026-04-20] OISST native lon is 0-360; GoM bbox sel(lon=slice(-71,-66)) returns empty on direct files — use ncdcOisst21Agg_LonPM180 ERDDAP dataset which uses -180/180 convention
 [2026-04-20] Parallel GEE sessions (2 WN2 years simultaneously) cause gRPC [Errno 11] resource exhaustion — run WN2 years sequentially on same machine
+[2026-04-20] WN2 annual _build_dataset() concat mixes zarr-backed daily stores (with encoding) + in-memory stores — pop chunks encoding + rechunk({"time":30}) before _gcs_safe_write in fetch_and_cache()
 
 ## Pre-/clear Protocol
 

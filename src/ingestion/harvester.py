@@ -401,6 +401,9 @@ class WeatherNext2Harvester:
 
         if self._key:
             os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", self._key)
+        for var in ds.data_vars:
+            ds[var].encoding.pop("chunks", None)
+        ds = ds.chunk({"time": 30})
         _gcs_safe_write(ds, gcs_uri)
         logger.info("WN2 year %d Zarr written to %s", year, gcs_uri)
 
@@ -1067,6 +1070,13 @@ class DataHarmonizer:
         if wn2_regridded.sizes.get("member", 1) == 1:
             logger.info("member=1 detected — expanding to 64 synthetic members.")
             wn2_regridded = DataHarmonizer.expand_and_perturb(wn2_regridded)
+
+        # Normalize dim order to (member, time, latitude, longitude).
+        # WN2 zarrs are stored with (time, member, lat, lon) because _build_dataset
+        # uses expand_dims({"time": ...}) which places time at position 0.
+        # ERA5 is already (member, time, lat, lon) after expand_and_perturb — no-op.
+        if "member" in wn2_regridded.dims:
+            wn2_regridded = wn2_regridded.transpose("member", "time", "latitude", "longitude")
 
         logger.info("Regridding HYCOM to 0.25-degree target grid.")
         hycom_regridded = hycom_ds.interp(

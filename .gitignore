@@ -27,3 +27,7 @@ credentials.json
 
 # Personal GCP infrastructure details — never commit
 mondal-mhw-gcp-info.md
+# Added by code-review-graph
+.code-review-graph/
+.dual-graph/
+.dual-graph-context/

@@ -164,7 +164,8 @@ def main():
         "domain_bbox": GoM_BBOX,
         "train_period": TRAIN_PERIOD,
         "val_period": VAL_PERIOD,
-        "grad_clip_max_norm": 1.0,
+        "grad_clip_max_norm": 10.0,
+        "label_norm": 250.0,
         "dry_run": args.dry_run,
     }
     with open(f"data/results/{PREFIX}_config.json", "w") as fh:
@@ -190,7 +191,7 @@ def main():
         train_loss = F.mse_loss(sdd_pred, label_t_train)
         optimizer.zero_grad()
         train_loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         optimizer.step()
 
         # --- Validation step (no gradient) ---

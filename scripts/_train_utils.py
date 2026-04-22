@@ -37,6 +37,11 @@ from src.analytics.sdd import accumulate_sdd
 
 GoM_BBOX     = (-71.0, 41.0, -66.0, 45.0)   # (lon_min, lat_min, lon_max, lat_max)
 
+# Label normalization constant: divide SDD labels by this before training,
+# multiply predictions by this at inference. Keeps MSE gradient ~O(1) so
+# grad_clip=10.0 rarely triggers. Physical scale ~252 deg C*day for GoM 2022.
+LABEL_NORM   = 250.0
+
 # Shared training periods for ERA5 and WN2.
 # Both use 2022/2023 for apples-to-apples XAI comparison. ERA5 covers 1979-present
 # on GEE; WN2 covers 2022-present. HYCOM GLBy0.08/expt_93.0 covers through 2024-09-04.
@@ -135,7 +140,8 @@ def build_tensors(
 
     mhw_mask = compute_mhw_mask(sst_celsius, threshold_regrid)
     sdd_phys = accumulate_sdd(sst_celsius, threshold_regrid, mhw_mask)  # (member, lat, lon)
-    label_arr   = sdd_phys.mean(dim=["latitude", "longitude"]).values.astype(np.float32)  # (member,)
+    label_arr = sdd_phys.mean(dim=["latitude", "longitude"]).values.astype(np.float32)  # (member,)
+    label_arr = label_arr / LABEL_NORM  # normalize to ~O(1) so MSE gradient stays unclipped
 
     hycom_t = torch.from_numpy(hycom_arr).unsqueeze(0)   # (1, M, 11, 4)
     wn2_t   = torch.from_numpy(wn2_arr).unsqueeze(0)    # (1, M, seq_len, 5)
@@ -212,7 +218,7 @@ def run_svar_inference(
                 wt = torch.from_numpy(wn2_cell).unsqueeze(0).to(device)    # (1, M, 90, 5)
 
                 sdd_pred, _, _ = model(ht, wt)  # (1, M)
-                sdd_1d = sdd_pred[0]             # (M,)
+                sdd_1d = sdd_pred[0] * LABEL_NORM  # restore physical units [deg C * day]
 
                 svar_95[i, j] = sdd_1d.quantile(0.95).item()
                 svar_50[i, j] = sdd_1d.quantile(0.50).item()
@@ -347,7 +353,7 @@ def save_plots(
     lim = max(pred_vals.max(), actual_vals.max()) * 1.1
     ax.scatter(actual_vals, pred_vals, alpha=0.6, color="steelblue", s=20)
     ax.plot([0, lim], [0, lim], "k--", linewidth=1, label="Perfect fit")
-    ax.set_xlabel("Physics SDD [deg C * day]"); ax.set_ylabel("Predicted SDD [deg C * day]")
+    ax.set_xlabel("Physics SDD [normalized]"); ax.set_ylabel("Predicted SDD [normalized]")
     ax.set_title(f"{prefix.upper()} — Predicted vs actual (val set)")
     ax.set_xlim(0, lim); ax.set_ylim(0, lim)
     ax.legend(); ax.grid(True, alpha=0.3)

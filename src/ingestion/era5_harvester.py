@@ -43,13 +43,6 @@ ERA5_BANDS: dict[str, str] = {
     "u_component_of_wind_10m":    "10m_u_component_of_wind",
     "v_component_of_wind_10m":    "10m_v_component_of_wind",
     "mean_sea_level_pressure":    "mean_sea_level_pressure",
-    # TODO: verify that "sea_surface_temperature" exists as a band in ECMWF/ERA5/HOURLY
-    # on GEE before running production fetches. The DAILY collection exposes it, but
-    # HOURLY may not. If absent, GEE sampleRectangle returns defaultValue=0 silently,
-    # corrupting all SST inputs to the model. To verify: run
-    #   ee.ImageCollection("ECMWF/ERA5/HOURLY").first().bandNames().getInfo()
-    # and confirm "sea_surface_temperature" is in the result. If not, remove this entry
-    # and remove "sea_surface_temperature" from WN2_VARS in scripts/_train_utils.py.
     "sea_surface_temperature":    "sea_surface_temperature",
 }
 

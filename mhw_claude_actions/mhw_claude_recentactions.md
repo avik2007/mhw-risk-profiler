@@ -4,6 +4,118 @@
 
 ---
 
+## [2026-04-22] Session 26 — WN2 50-epoch results reviewed; label diagnostic run; grad_clip root cause confirmed
+
+### What happened
+- **WN2 results pulled** from mhw-training VM (`/home/avik2007/data/` not `~/mhw-risk-profiler/data/` — script ran from `~`): train=63308, val=38201, SVaR_95=1.09, spread=0.00, gate=0.769
+- **ERA5 results confirmed**: train=63224, val=38103, SVaR_95=1.34, spread=0.00, gate=0.281 (atm-dominant, opposite to WN2)
+- **Pred vs actual**: model predicts ~1 °C·day vs labels ~200 °C·day — 200× underprediction. Gate histogram shows all 64 cells identical value.
+- **diagnose_labels.log** run on VM: SST mean=11.95°C, threshold mean=10.87°C, MHW mask=50.8%, SDD=252.77 °C·day for ALL 64 members (identical to 8 decimal places — HYCOM deterministic, no member variation)
+- **Root cause confirmed**: grad_clip=1.0 clips gradient ~500 every step → near-zero learning. Label scale mismatch (250 vs model output ~1) is primary driver.
+- **Spread=0 physics**: HYCOM is a single deterministic run — all 64 member labels are identical → no gradient signal to differentiate member predictions → spread=0 by construction. Fix may yield non-zero spread only if atm stream (WN2 varies per member) dominates gate post-fix.
+- **Model uses Softplus** (not ReLU) in regression head — correct for SDD≥0 constraint, not the cause of gradient issues.
+- **Monitor** armed (task bucoe4n0g) polling VM every 30s for new training activity.
+
+### Key decisions
+- 252 °C·day labels + 50.8% MHW mask = physically valid, not bugs
+- Fix is label normalization (÷250) + grad_clip→10.0, not architectural change
+- spread>0 not guaranteed post-fix — depends on gate recalibration toward atm-dominant
+
+### Next
+- Implement: `LABEL_NORM=250.0` in `_train_utils.py`, `grad_clip_max_norm=10.0` in both training scripts
+- Commit harvester.py dim-order fix (still uncommitted)
+- SCP to VM, retrain ERA5 then WN2
+
+---
+
+## [2026-04-21] Session 25 — WN2 2023 zarr consolidated; label diagnosis; dim-order fix; WN2 training launched
+
+### What happened
+- **WN2 training PID 4296 crashed**: `wn2_2023 zarr` missing from GCS (only daily tiles present, annual not consolidated)
+- **ERA5 PID 4050 was still running**: killed after confirming epoch 50/50 done (train=63k, val=38k, SVaR_95=1.34)
+- **WN2 2023 consolidated**: ran `run_wn2_prep.py --year 2023` on mhw-training; 365 daily tiles → annual zarr with `.complete` sentinel written (22:08)
+- **Reviewed train_wn2.py + _train_utils.py** before training: all params confirmed (lr=1e-4, epochs=50, seq_len=90, N_MEMBERS=64, grad_clip=1.0)
+- **Diagnosed SDD label magnitude**: 252 °C·day confirmed real — 2022 GoM was record-warm year; 50% MHW mask fraction against 30yr OISST baseline is physically valid. No code bug.
+- **WN2 dim-order bug found**: WN2 zarrs store `(time, member, lat, lon)` due to `expand_dims({"time":...})` in `_build_dataset()` placing time at dim 0; ERA5 goes through `expand_and_perturb` which corrects order. Fix: added `transpose("member","time","latitude","longitude")` in `harmonize()` after expand_and_perturb check. SCP'd to mhw-training (not committed).
+- **WN2 training launched**: PID 17145, `~/train_wn2.log`, 22:41. stdout fully buffered — output only visible on process exit. Process healthy at turn 20 (230% CPU, 3.2GB RSS, 98 CPU-min).
+- **Grad-clip concern**: 200× mismatch between label (~252) and model output (~1-2) means MSE gradient ≈ -500 → clipped every epoch → near-zero learning. Fix options: increase max_norm or normalize labels. Decision deferred until WN2 results reviewed.
+
+---
+
+## [2026-04-21] Session 24 — SDD label fix applied; ERA5 retrain done; WN2 training launched
+
+### What happened
+- **Verified HYCOM water_temp[depth=0]**: Gulf of Maine (lat 41-45°N, lon -71 to -66°W), 0-16°C range across seasons — physically correct. Not Gulf of Mexico.
+- **Fixed SDD label bug** in `scripts/_train_utils.py:117`: replaced `merged["sea_surface_temperature"] - 273.15` (ERA5, Kelvin, sparse) with `merged["water_temp"].isel(depth=0)` (HYCOM surface, °C, full ocean grid). Updated docstrings. Added `test_build_tensors_label_uses_hycom_sst` — 4/4 tests pass.
+- **Committed + pushed** `79853d7` — "fix: use HYCOM water_temp[depth=0] for SDD label instead of ERA5 SST"
+- **ERA5 retrain (50 epochs)** on `mhw-training` (PID 4050, then restarted with PYTHONUNBUFFERED=1): train_loss 63474→63225, val_loss 38191→38104, SVaR_95 1.12→1.34, spread=0.00. Loss 2× higher than before (labels now real, not ~0). Only 0.4% improvement over 50 epochs — model barely moved.
+- **Root cause of flat ERA5 loss**: model predicts ~1.3 °C·day; HYCOM SDD labels ~250 °C·day → 200× scale mismatch. MSE of (1.3-250)² ≈ 63k matches observed loss. Grad clip at norm=1.0 caps every update → near-zero learning.
+- **Spread=0 accepted for ERA5**: HYCOM is broadcast identically to all 64 Gaussian-noise ERA5 members → label is identical per member → spread=0 by construction. Scientifically acceptable — ERA5 is a proxy; spread is a WN2 property.
+- **Correction saved to memory**: Gaussian noise applied to ERA5 (single reanalysis → 64 synthetic members), NOT WN2 (genuine 64-member physical ensemble).
+- **WN2 training launched** on `mhw-training` (PID 4296, `~/train_wn2.log`). Both 2022+2023 WN2 zarrs confirmed in GCS.
+- **New high-priority bug flagged**: SDD labels ~250 °C·day is suspect (expected 10-100 °C·day for GoM). Hypothesis: `compute_mhw_mask` not aligning `dayofyear` threshold to calendar dates → all days exceed threshold → full-year SDD accumulation.
+- **GPU quota**: request in-flight; retry in 2 days. `GPUS_ALL_REGIONS` quota, not regional.
+
+### Key decisions
+- ERA5 label scale bug (250 °C·day) is a separate issue from the SST-source fix — diagnose after WN2 training
+- Label normalization and LR tuning deferred until SDD magnitude bug is diagnosed
+- spread=0 is acceptable for ERA5 proxy; expect spread > 0 from WN2 genuine ensemble
+
+### Next
+- Check WN2 training log: `tail -5 ~/train_wn2.log` on `mhw-training`
+- Diagnose SDD label magnitude: print `label_t.mean()/max()`, check `compute_mhw_mask` dayofyear alignment in `src/analytics/mhw_detection.py`
+- After WN2 done + SDD bug fixed: retrain ERA5 with label normalization (divide by mean SDD, store scale in config)
+- GPU quota retry in ~2 days
+
+---
+
+## [2026-04-21] Session 23 — ERA5 50-epoch run complete; SDD label bug discovered
+
+### What happened
+- **Verified all 5 GCS sentinels** green: hycom/tiles/2022, /2023, climatology, era5/2022, /2023
+- **Cleaned up 6 idle VMs**: mhw-2022-m06/07/09/12, mhw-2023-m12, mhw-hycom2023-prep — all terminated
+- **GPU quota = 0**: T4/L4 exhausted across all zones + project has GPUS_ALL_REGIONS=0. User submitted quota request (limit=2). Machine image `mhw-data-prep-img` created for future GPU VM.
+- **Created `mhw-training`** (us-central1-c, e2-highmem-8, 64GB, CPU-only) from machine image — `mhw-data-prep` exhausted in us-central1-a
+- **ERA5 50-epoch run completed** on `mhw-training` (PID 1232): train_loss 37079→36888, val_loss 20045→19912, SVaR_95 0.65→1.12, spread=0.00 throughout
+- **Root cause investigation**: plots pulled locally. Two bugs found in `build_tensors()`:
+  - **Bug 1 (critical)**: SDD label uses `merged["sea_surface_temperature"]` (ERA5, Kelvin, only 4×5 coverage). Interpolated to 17×21 grid → 337 cells have fill-value SST (-272°C). Those cells → SDD=0 via clip. ~50 valid cells have SDD=600-1200. Spatial mean ≈ 193. This explains 100× underprediction and is NOT a scale issue — it's the **wrong SST variable**.
+  - **Bug 2 (consequence)**: spread=0 because all 64 members see the same garbage-dominated spatial average.
+- **Fix identified**: use `merged["water_temp"].isel(depth=0)` (HYCOM surface, Celsius, full GoM coverage) instead of ERA5 SST for label computation. One-line change in `_train_utils.py:117`.
+- **50-epoch run results are invalid** — discard, retrain after fix.
+
+### Key decisions
+- HYCOM water_temp[depth=0] is the correct SST for SDD label — ERA5 SST lacks ocean grid coverage
+- mhw-training VM (us-central1-c) is the active training machine — keep running, reuse for retrain
+- Do NOT add label normalization or LR changes until HYCOM SST fix is verified — scale issue was a symptom, not the disease
+
+### Next
+- Verify HYCOM water_temp[depth=0] sample values (confirm ~15-25°C on VM)
+- Fix `scripts/_train_utils.py` line ~117: swap SST source
+- Retrain ERA5 50 epochs, verify spread > 0 and SVaR_95 > SVaR_50 > SVaR_05
+
+---
+
+## [2026-04-20] Session 22 — B2 fixed + done; ERA5 training launched on mhw-data-prep VM
+
+### What happened
+- **B2 ROOT CAUSE**: Process died at day 113/365 in `_build_dataset()` — `_gcs_safe_write` for annual store was never called. Not a silent failure; incomplete run.
+- **B2 FIX** (`harvester.py:fetch_and_cache()`): added encoding pop + rechunk({"time":30}) after `_build_dataset()` returns, before `_gcs_safe_write` — same fix as HYCOM annual tile. Mirrors lesson `[2026-04-19]`.
+- **B2 DONE**: Re-ran `run_wn2_prep.py --year 2022` locally. Cache hits for days 1-113, fetched 114-365, annual Zarr written at 19:20 local: `gs://mhw-risk-cache/weathernext2/cache/wn2_2022-01-01_2022-12-31_m64.zarr`
+- **All 5 sentinels verified green**: hycom/tiles/2022, hycom/tiles/2023, hycom/climatology, era5/2022, era5/2023 — all `.complete` present
+- **ERA5 training launched on mhw-data-prep VM** (PID 28544, `~/train_era5.log`): `train_era5.py --epochs 50`
+- **Local training killed** (PID 32789): was running locally on WSL2 → IO-bound over home internet → 0.5% CPU, hung in Dask GCS download. Killed and moved to VM.
+- **VM training status**: still in data-load phase as of session end (Dask PerformanceWarning lines only, no epoch output yet). User disconnected with Ctrl+D (not Ctrl+B D) — process should survive as `nohup + disown`.
+
+### Key decisions
+- Always run training on mhw-data-prep (co-located with GCS) — local WSL2 is IO-bound
+- WN2 annual write needs encoding pop + rechunk same as HYCOM (both concat zarr-backed daily/monthly stores)
+
+### Next
+- SSH back to mhw-data-prep, verify PID 28544 alive, check `~/train_era5.log` for epoch output
+- After 50 epochs: review loss curves + SVaR metrics, then decide on LinkedIn post
+
+---
+
 ## [2026-04-20] Session 21 — A3 fixed (ERDDAP); WN2 zarr silent-write bug discovered
 
 ### What happened

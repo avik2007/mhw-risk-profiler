@@ -52,6 +52,8 @@ def main() -> None:
     bucket = os.environ.get("MHW_GCS_BUCKET", "").rstrip("/")
     if not bucket:
         raise RuntimeError("MHW_GCS_BUCKET env var not set.")
+    if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS env var not set.")
 
     year = int(os.environ.get("HYCOM_YEAR", ""))
     start_month = int(os.environ.get("HYCOM_START_MONTH", ""))
@@ -63,7 +65,10 @@ def main() -> None:
             f"HYCOM_END_MONTH={end_month}. Must satisfy 1 <= start <= end <= 12."
         )
 
-    annual_base = f"{bucket}/hycom/tiles/{year}/"
+    # IMPORTANT: month ranges across parallel VMs must not overlap.
+    # Concurrent writes to the same month_uri via _gcs_safe_write (rm + to_zarr)
+    # can interleave, producing a corrupt Zarr store that passes the .zmetadata check.
+    annual_base = f"{bucket}/hycom/tiles/{year}"
     logger.info(
         "HYCOM %d months %d-%d -> %s",
         year, start_month, end_month, annual_base,
@@ -77,7 +82,7 @@ def main() -> None:
         last_day = calendar.monthrange(year, month)[1]
         start_date = f"{year}-{month:02d}-01"
         end_date = f"{year}-{month:02d}-{last_day:02d}"
-        month_uri = f"{annual_base}monthly/m{month:02d}/"
+        month_uri = f"{annual_base}/monthly/m{month:02d}/"
 
         print(f"[{step}/{n_months}] HYCOM {year}-{month:02d} -> {month_uri}", flush=True)
 

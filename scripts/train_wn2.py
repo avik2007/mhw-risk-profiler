@@ -144,7 +144,8 @@ def main():
         "domain_bbox": GoM_BBOX,
         "train_period": list(TRAIN_PERIOD),
         "val_period": list(VAL_PERIOD),
-        "grad_clip_max_norm": 1.0,
+        "grad_clip_max_norm": 10.0,
+        "label_norm": 250.0,
         "dry_run": args.dry_run,
         "note": "Real FGN ensemble — no expand_and_perturb applied",
     }
@@ -170,7 +171,7 @@ def main():
         train_loss = F.mse_loss(sdd_pred, label_t_train)
         optimizer.zero_grad()
         train_loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
         optimizer.step()
 
         model.eval()
