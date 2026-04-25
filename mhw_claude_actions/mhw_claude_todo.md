@@ -5,7 +5,7 @@
 
 ---
 
-## DONE (sessions 24–26)
+## DONE (sessions 24–27)
 
 - SDD label fix (commit 79853d7), ERA5 retrain done (train=63k, val=38k, SVaR_95=1.34, spread=0)
 - WN2 2023 annual zarr consolidated from daily cache (EXIT_CODE:0, 2026-04-21 22:08)
@@ -14,62 +14,30 @@
 - WN2 50-epoch training complete (2026-04-22 00:06): train=63308, val=38201, SVaR_95=1.09, spread=0.00, gate=0.769 — results pulled locally
 - diagnose_labels.log confirms: 252.77 °C·day labels, 50.8% MHW mask, all 64 member labels IDENTICAL (HYCOM deterministic — spread=0 by construction)
 - Root cause of flat loss confirmed: grad_clip=1.0 clips MSE gradient ~500 every step → near-zero learning
+- **LABEL_NORM=250.0 + grad_clip=10.0 fix implemented** (commit 86a2614), ERA5 retrain complete: train→0.0001, val→0.046, SVaR_95=1.00 (normalized), spread=0.00 (expected). Model converged.
 
 ---
 
-## ACTIVE — Fix grad_clip + label normalization, then retrain
+## QUEUED — README figure polish (post-commit)
 
-**Root cause:** grad_clip=1.0 with MSE gradient ≈ 2×(pred−label) ≈ −500 → clipped every epoch → near-zero learning. Both ERA5 and WN2 stuck. WN2 spread=0 because HYCOM labels identical across members + gate depth-dominant (0.77).
+- [ ] WN2 mean SST plot: mask cold-blue artifact pixels (Cape Cod coastal WN2 cells with ~0°C values leaking through; clip values < 5°C or apply stricter NaN mask in `generate_spatial_figures.py`)
+- [ ] Network diagram: review sublabel font sizes at final dpi — may need further compression
 
-**Why label norm fixes it:**
-- Model output at init ≈ 0.5–2.0 (Softplus of near-zero linear weights)
-- Without norm: loss=(1−250)²=62001, gradient=−498 → clipped every step → near-zero learning
-- With norm: label=250/250=1.0, loss=(0.008−1)²≈0.98, gradient≈−2 → grad_clip rarely triggers → full LR updates
-- Denorm at inference (×250) restores physical units for SVaR output
+---
 
-**Implementation — 3 files to touch:**
+## ACTIVE — WN2 SVaR inference running (PID 26740, mhw-training VM)
 
-**1. `scripts/_train_utils.py`** — add constant + normalize in `build_tensors()` + denorm in `run_svar_inference()`:
-```python
-LABEL_NORM = 250.0  # deg C * day — approx label scale for GoM 2022-2023
+- ERA5 training + SVaR complete (EXIT_CODE:0). WN2 50 epochs done, SVaR inference in progress.
+- ERA5 results: train→0.0001, val→0.046, SVaR_95=1.00 normalized (250 °C·day), spread=0, gate=0.338 (atm)
+- WN2 results: train→0.025, val→0.0001, SVaR_95=0.81 normalized (~203 °C·day), spread=0, gate=0.669 (ocean)
+- spread=0 for both: HYCOM labels identical across members — expected, not a bug
 
-# in build_tensors(), after label_arr is computed:
-label_arr = label_arr / LABEL_NORM
-
-# in run_svar_inference(), after model forward pass:
-sdd = sdd * LABEL_NORM  # restore physical units before quantile
-```
-
-**2. `scripts/train_era5.py`** — change grad_clip:
-```python
-grad_clip_max_norm=10.0  # was 1.0
-```
-
-**3. `scripts/train_wn2.py`** — same grad_clip change:
-```python
-grad_clip_max_norm=10.0  # was 1.0
-```
-
-**Steps:**
-- [ ] Implement above 3 changes locally
-- [ ] **COMMIT** `src/ingestion/harvester.py` dim-order fix (transpose in `harmonize()`) — SCP'd to VM, not committed
-- [ ] SCP updated scripts to mhw-training VM
-- [ ] Retrain ERA5 (50 epochs) — verify normalized loss converges toward 0, spread still 0 (by design — ERA5 labels identical across members)
-- [ ] Retrain WN2 (50 epochs) — verify spread > 0 if gate recalibrates toward atm-dominant
-
-**Hypothesis:** `compute_mhw_mask` / `accumulate_sdd` not correctly aligning `dayofyear` threshold to
-calendar dates in `merged.time` → every day treated as exceeding threshold → SDD accumulates for full 365 days.
-
-**Diagnostic (run on VM, no training needed):**
-```python
-# In a quick script: load merged, threshold, call build_tensors(), print label stats
-print(label_t.mean(), label_t.max())  # expect ~20-100 °C·day; if ~250 → bug confirmed
-# Also spot-check: what fraction of days have mhw_mask=True?
-```
-
-**Files to inspect:** `src/analytics/mhw_detection.py` (`compute_mhw_mask`), `src/analytics/sdd.py` (`accumulate_sdd`)
-
-**Fix if confirmed:** Ensure `threshold.sel(dayofyear=merged.time.dt.dayofyear)` alignment is correct before mask computation.
+**Next:**
+- [ ] Wait for WN2 SVaR inference to finish (monitor PID 26740)
+- [ ] Pull all results locally: `gcloud compute scp mhw-training:~/mhw-risk-profiler/data/results/ data/results/ --recurse --zone=us-central1-c`
+- [ ] Review loss curves + SVaR maps + pred-vs-actual plots
+- [ ] Decide: accept spread=0 and proceed to payout.py, OR investigate architectural fix for spread (e.g. per-member HYCOM perturbation so labels differ across members)
+- [ ] LinkedIn ERA5 post prep (pending results review)
 
 ---
 

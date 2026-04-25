@@ -102,6 +102,26 @@ quantiles of this distribution, calibrated against historical HYCOM reanalysis.
 
 ---
 
+## Visualizations
+
+### Spatial Inputs: WeatherNext 2 SST
+![WN2 SST mean and ensemble spread](docs/assets/figures/wn2_sst_mean_spread.png)
+*Ensemble mean (left) and spread — std across 64 FGN members (right) for 2023-07-10, the highest-spread day in the GCS cache. Spread highlights regions where MHW outcomes diverge most across members, directly mapping to SVaR tail risk.*
+
+### Spatial Inputs: HYCOM SST
+![HYCOM SST](docs/assets/figures/hycom_sst.png)
+*HYCOM 0.08° surface temperature for the same date — 3× finer resolution than WeatherNext 2. Gulf Stream warm-core filaments and shelf-break fronts are resolved in detail.*
+
+### Model Architecture
+![Network Architecture](docs/assets/figures/network_architecture.png)
+*Dual-stream architecture: CNN1dEncoder encodes HYCOM vertical profiles (mixed layer depth, thermocline); TransformerEncoder encodes 90-day WN2/ERA5 atmospheric sequences. LeakyGate fuses both into per-member SDD predictions used for SVaR estimation.*
+
+### XAI: Integrated Gradients Attribution (ERA5 vs WeatherNext 2)
+![XAI Attribution](docs/assets/figures/xai_attribution_grid.png)
+*Seasonal attribution maps showing which input features drive SDD predictions. ERA5 (blue) vs WeatherNext 2 (red) reveals how non-Gaussian ensemble spread shifts feature importance across atmospheric and ocean variables.*
+
+---
+
 ## Repository Architecture
 
 See `mhw-repo-architecture.md` for the annotated directory tree.

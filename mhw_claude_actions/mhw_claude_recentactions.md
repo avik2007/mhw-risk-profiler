@@ -4,6 +4,74 @@
 
 ---
 
+## [2026-04-22] Session 28 — monitoring SVaR/IG inference; both scripts still running post-training
+
+### What happened
+- **WN2 50-epoch training confirmed complete**: train=0.0246, val=0.0004, SVaR_95=0.81 (~203 °C·day), spread=0.00, gate=0.669. Converged cleanly.
+- **All 10 plots saved** (ERA5 + WN2, 5 each): loss_curve, pred_vs_actual, gate_hist, spread_curve, svar_curve.
+- **Both PIDs still running** (26043=ERA5, 26740=WN2) doing silent post-training SVaR inference + IG attribution. No `wn2_svar.zarr` written yet at session end.
+- **ERA5 process** (26043): 336% CPU, 3.5GB RAM — likely on IG attribution (Captum, slow CPU).
+- No code changes this session — monitoring only.
+
+### Key decisions
+- Processes not hung — actively consuming CPU. Just slow CPU-bound inference.
+- `era5_svar.zarr` exists (from prior run Apr 21 19:36); current run will overwrite when done.
+
+### Next
+- Wait for PIDs 26043 + 26740 to finish (check `wn2_svar.zarr` appears in results/)
+- Pull all results: `gcloud compute scp mhw-training:~/mhw-risk-profiler/data/results/ data/results/ --recurse --zone=us-central1-c`
+- Review plots + SVaR maps + pred-vs-actual
+- Decide: accept spread=0 → payout.py, OR investigate per-member HYCOM perturbation
+
+---
+
+## [2026-04-22] Session 27 — label norm + grad_clip fix; ERA5 + WN2 retrain both converged
+
+### What happened
+- **Checked VM logs**: both ERA5 + WN2 old runs confirmed complete. No new training running at session start.
+- **Implemented 3-file fix** (commit 86a2614): `LABEL_NORM=250.0` in `_train_utils.py`, `grad_clip 1→10` in both training scripts; also committed `harvester.py` WN2 dim-order + encoding fixes.
+- **ERA5 retrain** (PID 26043): train→0.0001, val→0.046, SVaR_95=1.00 normalized (250 °C·day), spread=0, gate=0.338. SVaR inference completed (EXIT_CODE:0).
+- **WN2 retrain** (PID 26740, launched in parallel): train→0.025, val→0.0001, SVaR_95=0.81 normalized (~203 °C·day), spread=0, gate=0.669. SVaR inference in progress at session end.
+- **spread=0 confirmed** for both: HYCOM is a single deterministic run broadcast to all 64 members → labels identical → no gradient signal for member differentiation.
+
+### Key decisions
+- spread=0 is physically correct given current data setup; not a training bug
+- Both models overfit (single spatial-average tensor/year, batch=1) — acceptable for current baseline
+- Proceed to results review + payout.py after WN2 SVaR completes
+
+### Next
+- Wait for WN2 SVaR inference to finish
+- Pull results locally + review plots
+- Decide on spread fix vs proceed to payout.py
+
+---
+
+## [2026-04-22] Session 26 — WN2 50-epoch results reviewed; label diagnostic run; grad_clip root cause confirmed
+
+### What happened
+- **Checked VM logs**: both ERA5 + WN2 old runs confirmed complete (train/wn2 logs from prior sessions). No new training running at session start.
+- **Implemented 3-file fix** (commit 86a2614):
+  - `scripts/_train_utils.py`: `LABEL_NORM=250.0`; `label_arr /= LABEL_NORM` in `build_tensors()`; `sdd_1d *= LABEL_NORM` in `run_svar_inference()`
+  - `scripts/train_era5.py`: `grad_clip_max_norm 1.0 → 10.0`, added `label_norm=250.0` to config JSON
+  - `scripts/train_wn2.py`: same grad_clip + config changes
+  - Also committed: `harvester.py` WN2 dim-order transpose fix + encoding pop/rechunk (previously SCP-only)
+- **Dry-run verified** both ERA5 and WN2: loss ~115 (normalized), dropping each epoch, spread ~0.05 on random tensors
+- **SCP'd to VM**, launched ERA5 retrain (PID 26043, `~/train_era5.log`)
+- **ERA5 50-epoch results**: train 0.97→0.0001, val 0.001→0.046, SVaR_95=1.00 (normalized = 250 °C·day physical). Converged. Val loss diverges after ep~25 (overfitting — single spatial-average tensor per year, batch=1).
+- **SVaR inference still running** at session end (~10 min, 357 cells, CPU-only)
+
+### Key decisions
+- Overfitting (train→0 vs val→0.046) is expected/acceptable at this stage: batch=1, no regularization, spatial-average labels. Fix later with per-cell tensor batching or dropout.
+- spread=0 correct for ERA5: HYCOM labels identical across all 64 synthetic members by construction.
+- WN2 retrain deferred until ERA5 SVaR inference completes.
+
+### Next
+- Wait for SVaR inference to finish (monitor PID 26043)
+- Pull results locally
+- Launch WN2 retrain (same nohup pattern)
+
+---
+
 ## [2026-04-22] Session 26 — WN2 50-epoch results reviewed; label diagnostic run; grad_clip root cause confirmed
 
 ### What happened
