@@ -78,7 +78,8 @@ def build_tensors(
     seq_len: int = SEQ_LEN,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Convert a harmonized xr.Dataset into (hycom_t, wn2_t, label_t) PyTorch tensors.
+    Convert a harmonized xr.Dataset into (hycom_t, wn2_t, label_t) PyTorch tensors,
+    stacking all valid ocean grid cells into the batch dimension.
 
     Parameters
     ----------
@@ -92,62 +93,76 @@ def build_tensors(
         Produced by mhw_detection.compute_climatology().
     seq_len : int
         Number of time steps to use from the atmospheric sequence.
-        Uses the LAST seq_len days of the time axis — most recent atmospheric
-        forcing is most predictive of current thermal stress accumulation.
+        Uses the LAST seq_len days of the time axis.
 
     Returns
     -------
-    hycom_t : torch.Tensor, shape (1, member, depth=11, channels=4)
-        Time- and spatially-averaged HYCOM profile per member.
-        All 64 members are identical (HYCOM is broadcast by DataHarmonizer).
-    wn2_t : torch.Tensor, shape (1, member, seq_len, features=5)
-        Last seq_len days of WN2/ERA5 atmospheric sequence, spatially averaged.
-    label_t : torch.Tensor, shape (1, member)
-        Physics-based SDD label [deg C * day] spatially averaged over the GoM domain.
-        Computed from merged SST (converted to deg C) via MHW mask + accumulate_sdd.
+    hycom_t : torch.Tensor, shape (N_cells, member, depth=11, channels=4)
+        Ocean profile per cell per member. N_cells is the number of non-NaN ocean cells.
+    wn2_t : torch.Tensor, shape (N_cells, member, seq_len, features=5)
+        Last seq_len days of atmospheric sequence per cell per member.
+    label_t : torch.Tensor, shape (N_cells, member)
+        Physics-based SDD label [deg C * day] per cell per member, normalized by LABEL_NORM.
     """
-    # HYCOM: time-and-spatial mean -> (member, depth=11, channels=4)
-    hycom_arr = np.stack(
-        [merged[v].mean(dim=["time", "latitude", "longitude"]).values for v in HYCOM_VARS],
-        axis=-1,
-    ).astype(np.float32)  # (member, depth, 4)
-
-    # WN2/ERA5: last seq_len days, spatial mean -> (member, seq_len, features=5)
-    wn2_arr = np.stack(
-        [merged[v].isel(time=slice(-seq_len, None)).mean(dim=["latitude", "longitude"]).values
-         for v in WN2_VARS],
-        axis=-1,
-    ).astype(np.float32)  # (member, seq_len, 5)
-
-    # SDD label: HYCOM surface layer (depth=0), already in °C, full GoM ocean coverage.
-    # ERA5 sea_surface_temperature covers only ~20/357 GoM cells (rest are fill extrapolation)
-    # and would collapse the spatial mean to ~0 — do NOT use it for the label.
-    sst_celsius = merged["water_temp"].isel(depth=0)  # (member, time, latitude, longitude), °C
-
-    # Threshold is saved from HYCOM tiles using 'lat'/'lon' at 0.08° resolution.
-    # Rename and interpolate to match merged's 'latitude'/'longitude' at 0.25° target grid.
-    # Without this, xarray outer-products (17×21) × (101×63) → ~15 GB and OOM.
+    # 1. Regrid threshold to match merged grid
     rename_map = {}
     if "lat" in threshold.dims:
         rename_map["lat"] = "latitude"
     if "lon" in threshold.dims:
         rename_map["lon"] = "longitude"
     threshold_regrid = threshold.rename(rename_map) if rename_map else threshold
-    # Always interp to exact merged grid (pass .values to avoid DataArray dim metadata issues)
     threshold_regrid = threshold_regrid.interp(
         latitude=merged.latitude.values, longitude=merged.longitude.values
     )
 
+    # 2. Compute physics-based SDD labels
+    sst_celsius = merged["water_temp"].isel(depth=0)  # (member, time, latitude, longitude)
     mhw_mask = compute_mhw_mask(sst_celsius, threshold_regrid)
     sdd_phys = accumulate_sdd(sst_celsius, threshold_regrid, mhw_mask)  # (member, lat, lon)
-    label_arr = sdd_phys.mean(dim=["latitude", "longitude"]).values.astype(np.float32)  # (member,)
-    label_arr = label_arr / LABEL_NORM  # normalize to ~O(1) so MSE gradient stays unclipped
 
-    hycom_t = torch.from_numpy(hycom_arr).unsqueeze(0)   # (1, M, 11, 4)
-    wn2_t   = torch.from_numpy(wn2_arr).unsqueeze(0)    # (1, M, seq_len, 5)
-    label_t = torch.from_numpy(label_arr).unsqueeze(0)  # (1, M)
+    # 3. Create Land Mask (keep only cells that are valid across all time and members)
+    # threshold_regrid is (dayofyear, lat, lon). Use its spatial mask.
+    land_mask = ~threshold_regrid.isel(dayofyear=0).isnull()
+    # Also ensure SST is valid (non-zero/non-NaN)
+    sst_valid = ~sst_celsius.isel(member=0, time=0).isnull()
+    combined_mask = land_mask & sst_valid
+
+    # 4. Extract valid cell indices
+    lats, lons = np.where(combined_mask.values)
+    n_cells = len(lats)
+
+    # 5. Extract and stack tensors for each valid cell
+    # HYCOM: time-mean -> (member, depth, lat, lon) -> (n_cells, member, depth, 4)
+    hycom_raw = np.stack(
+        [merged[v].mean(dim="time").values for v in HYCOM_VARS],
+        axis=-1,
+    )  # (member, depth, lat, lon, 4)
+    
+    # WN2: last seq_len days -> (member, seq_len, lat, lon, 5)
+    wn2_raw = np.stack(
+        [merged[v].isel(time=slice(-seq_len, None)).values for v in WN2_VARS],
+        axis=-1,
+    )  # (member, seq_len, lat, lon, 5)
+
+    hycom_list, wn2_list, label_list = [], [], []
+    for i in range(n_cells):
+        lat_idx, lon_idx = lats[i], lons[i]
+        
+        # hycom_raw is (M, D, L, Lo, C) -> slice to (M, D, C)
+        hycom_list.append(hycom_raw[:, :, lat_idx, lon_idx, :])
+        
+        # wn2_raw is (M, T, L, Lo, F) -> slice to (M, T, F)
+        wn2_list.append(wn2_raw[:, :, lat_idx, lon_idx, :])
+        
+        # sdd_phys is (M, L, Lo) -> slice to (M,)
+        label_list.append(sdd_phys.values[:, lat_idx, lon_idx])
+
+    hycom_t = torch.from_numpy(np.stack(hycom_list)).to(torch.float32)   # (N, M, 11, 4)
+    wn2_t   = torch.from_numpy(np.stack(wn2_list)).to(torch.float32)     # (N, M, 90, 5)
+    label_t = torch.from_numpy(np.stack(label_list)).to(torch.float32) / LABEL_NORM # (N, M)
 
     return hycom_t, wn2_t, label_t
+
 
 
 # ---------------------------------------------------------------------------
@@ -326,11 +341,24 @@ def save_plots(
     fig.savefig(plots_dir / f"{prefix}_spread_curve.png", dpi=120)
     plt.close(fig)
 
-    # --- Gate histogram (final epoch) ---
+    # --- Gate histogram + Pred vs actual (val set, all cells × all members) ---
+    # Mini-batch forward over val tensor to avoid Transformer OOM on full N_cells × 64.
     model.eval()
+    bs = 32
+    gate_chunks: list[torch.Tensor] = []
+    pred_chunks: list[torch.Tensor] = []
     with torch.no_grad():
-        _, _, gate = model(hycom_val.to(device), wn2_val.to(device))
-    gate_vals = gate[0].cpu().numpy()  # (member,)
+        for start in range(0, hycom_val.shape[0], bs):
+            end = start + bs
+            h_chunk = hycom_val[start:end].to(device)
+            w_chunk = wn2_val[start:end].to(device)
+            sdd_b, _, gate_b = model(h_chunk, w_chunk)
+            gate_chunks.append(gate_b.cpu())
+            pred_chunks.append(sdd_b.cpu())
+
+    gate_vals   = torch.cat(gate_chunks).reshape(-1).numpy()   # (N_cells * M,)
+    pred_vals   = torch.cat(pred_chunks).reshape(-1).numpy()   # (N_cells * M,)
+    actual_vals = label_val.reshape(-1).cpu().numpy()           # (N_cells * M,)
 
     fig, ax = plt.subplots(figsize=(6, 4))
     bins = 20 if gate_vals.std() > 1e-6 else 1
@@ -342,12 +370,6 @@ def save_plots(
     fig.tight_layout()
     fig.savefig(plots_dir / f"{prefix}_gate_hist.png", dpi=120)
     plt.close(fig)
-
-    # --- Pred vs actual (val set) ---
-    with torch.no_grad():
-        sdd_pred, _, _ = model(hycom_val.to(device), wn2_val.to(device))
-    pred_vals   = sdd_pred[0].cpu().numpy()   # (member,)
-    actual_vals = label_val[0].cpu().numpy()  # (member,)
 
     fig, ax = plt.subplots(figsize=(5, 5))
     lim = max(pred_vals.max(), actual_vals.max()) * 1.1

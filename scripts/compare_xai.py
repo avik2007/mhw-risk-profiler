@@ -45,12 +45,14 @@ HYCOM_CHANNEL_NAMES = HYCOM_VARS  # 4 HYCOM channels
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--use-gcs", action="store_true",
+                   help="Fetch and harmonize validation data from GCS.")
     p.add_argument("--era5-weights", default="data/models/era5_weights.pt")
     p.add_argument("--wn2-weights",  default="data/models/wn2_weights.pt")
     p.add_argument("--era5-data",    default=None,
-                   help="Path to merged ERA5 val Zarr (required for real run).")
+                   help="Path to merged ERA5 val Zarr (required for real local run).")
     p.add_argument("--wn2-data",     default=None,
-                   help="Path to merged WN2 val Zarr (required for real run).")
+                   help="Path to merged WN2 val Zarr (required for real local run).")
     p.add_argument("--n-steps",      type=int, default=50,
                    help="IG integration steps. More steps = more accurate but slower.")
     return p.parse_args()
@@ -112,7 +114,13 @@ def get_season_tensors(
     seq_len: int = SEQ_LEN,
 ) -> tuple:
     """
-    Extract HYCOM and WN2 tensors for the given season months from a merged Dataset.
+    Extract per-cell HYCOM and WN2 tensors for the given season months.
+
+    The model is trained on per-cell inputs (N_cells, member, ...). Spatial-mean
+    inputs are out-of-distribution for the trained model and would yield
+    misleading IG attributions. This function mirrors build_tensors() in
+    _train_utils.py: it stacks every valid ocean cell into the batch dimension
+    so IG runs on the same input distribution as training.
 
     Parameters
     ----------
@@ -132,37 +140,46 @@ def get_season_tensors(
 
     Returns
     -------
-    hycom_t : torch.Tensor, shape (1, member, depth=11, channels=4)
-    wn2_t   : torch.Tensor, shape (1, member, seq_len, features=5)
+    hycom_t : torch.Tensor, shape (N_cells, member, depth=11, channels=4)
+    wn2_t   : torch.Tensor, shape (N_cells, member, seq_len, features=5)
     """
     # Select time steps matching this season's months
     time_mask = merged["time"].dt.month.isin(season_months).values  # numpy bool array
     merged_season = merged.isel(time=time_mask)
 
-    # HYCOM: time+spatial mean -> (member, depth, channels=4)
-    hycom_arr = np.stack(
-        [merged_season[v].mean(dim=["time", "latitude", "longitude"]).values
-         for v in HYCOM_VARS],
-        axis=-1,
-    ).astype(np.float32)  # (member, depth, 4)
+    # Identify valid ocean cells using HYCOM water_temp[depth=0] (matches build_tensors)
+    sst_celsius = merged_season["water_temp"].isel(depth=0)  # (member, time, lat, lon)
+    valid_mask = ~sst_celsius.isel(member=0, time=0).isnull()
+    lats, lons = np.where(valid_mask.values)
+    n_cells = len(lats)
 
-    # WN2: spatial mean -> (member, T_season, features=5)
-    wn2_season_arr = np.stack(
-        [merged_season[v].mean(dim=["latitude", "longitude"]).values
-         for v in WN2_VARS],
+    # HYCOM: time-mean -> (member, depth, lat, lon, 4)
+    hycom_raw = np.stack(
+        [merged_season[v].mean(dim="time").values for v in HYCOM_VARS],
         axis=-1,
-    ).astype(np.float32)  # (member, T_season, 5)
+    ).astype(np.float32)
 
-    # Pad or truncate WN2 to seq_len on the time axis (left-pad with zeros)
-    T = wn2_season_arr.shape[1]
+    # WN2: full season -> (member, T_season, lat, lon, 5), pad/truncate to seq_len on time
+    wn2_full = np.stack(
+        [merged_season[v].values for v in WN2_VARS],
+        axis=-1,
+    ).astype(np.float32)
+    T = wn2_full.shape[1]
     if T >= seq_len:
-        wn2_seq = wn2_season_arr[:, -seq_len:, :]  # take last seq_len days
+        wn2_seq = wn2_full[:, -seq_len:, ...]
     else:
-        pad = np.zeros((n_members, seq_len - T, len(WN2_VARS)), dtype=np.float32)
-        wn2_seq = np.concatenate([pad, wn2_season_arr], axis=1)
+        pad_shape = (n_members, seq_len - T) + wn2_full.shape[2:]
+        pad = np.zeros(pad_shape, dtype=np.float32)
+        wn2_seq = np.concatenate([pad, wn2_full], axis=1)
 
-    hycom_t = torch.from_numpy(hycom_arr).unsqueeze(0).to(device)  # (1, M, 11, 4)
-    wn2_t   = torch.from_numpy(wn2_seq).unsqueeze(0).to(device)    # (1, M, seq_len, 5)
+    hycom_list, wn2_list = [], []
+    for i in range(n_cells):
+        lat_idx, lon_idx = lats[i], lons[i]
+        hycom_list.append(hycom_raw[:, :, lat_idx, lon_idx, :])  # (M, depth, 4)
+        wn2_list.append(wn2_seq[:, :, lat_idx, lon_idx, :])      # (M, seq_len, 5)
+
+    hycom_t = torch.from_numpy(np.stack(hycom_list)).to(torch.float32).contiguous().to(device)
+    wn2_t   = torch.from_numpy(np.stack(wn2_list)).to(torch.float32).contiguous().to(device)
     return hycom_t, wn2_t
 
 
@@ -171,67 +188,88 @@ def run_season_ig(
     hycom_t: torch.Tensor,
     wn2_t: torch.Tensor,
     n_steps: int = 50,
+    cells_per_chunk: int = 1,
 ) -> tuple:
     """
-    Run Captum Integrated Gradients for one season and aggregate attribution scores.
+    Run Captum Integrated Gradients for one season and aggregate attribution scores
+    across all valid ocean cells.
 
     Parameters
     ----------
     model : MHWRiskModel
         Trained model in eval mode.
-    hycom_t : torch.Tensor, shape (1, member, depth=11, channels=4)
-        HYCOM input tensor for the season.
-    wn2_t : torch.Tensor, shape (1, member, seq_len, features=5)
-        WN2/ERA5 atmospheric input tensor for the season.
+    hycom_t : torch.Tensor, shape (N_cells, member, depth=11, channels=4)
+        Per-cell HYCOM input tensor for the season.
+    wn2_t : torch.Tensor, shape (N_cells, member, seq_len, features=5)
+        Per-cell WN2/ERA5 atmospheric input tensor for the season.
     n_steps : int
         Number of IG integration steps. Higher = more accurate, slower.
+    cells_per_chunk : int
+        How many cells to feed to IG per call. Default 1 keeps the effective
+        per-step batch (cells_per_chunk × M=64 × internal_batch_size=5) at the
+        same ~320 profile budget as the pre-spatial-batching version, avoiding
+        swap thrash on a 16GB VM.
 
     Returns
     -------
     atm_scores : dict[str, float]
-        Mean |IG| attribution per WN2 variable (5 entries).
-        Higher score = that variable contributed more to the latent representation.
+        Mean |IG| attribution per WN2 variable (5 entries) across all cells.
     hycom_scores : dict[str, float]
-        Mean |IG| attribution per HYCOM channel (4 entries).
+        Mean |IG| attribution per HYCOM channel (4 entries) across all cells.
     gate_mean : float
-        Mean gate value across members (0=atmosphere-dominant, 1=depth-dominant).
+        Mean gate value across all cells × members (0=atmosphere-dominant,
+        1=depth-dominant).
     """
-    hycom_ig = hycom_t.requires_grad_(True)
-    wn2_ig   = wn2_t.requires_grad_(True)
-
+    n_cells = hycom_t.shape[0]
     ig = IntegratedGradients(latent_forward(model))
-    attr = ig.attribute(
-        (hycom_ig, wn2_ig),
-        baselines=(torch.zeros_like(hycom_ig), torch.zeros_like(wn2_ig)),
-        n_steps=n_steps,
-        internal_batch_size=5,  # process 5 alpha-steps × M=64 = 320 effective batch
-        # instead of n_steps × M = 50 × 64 = 3200, which allocates ~3.3 GB of
-        # Transformer attention weights simultaneously and thrashes swap to disk.
-    )
-    # attr[0]: (1, member, depth=11, channels=4) — HYCOM attribution
-    # attr[1]: (1, member, seq_len,  features=5) — WN2 attribution
 
-    # Detach before converting to scalar — avoids spurious autograd warnings
-    # from Captum's internal attribution norm checks.
-    hycom_abs = attr[0].detach().abs()
-    wn2_abs   = attr[1].detach().abs()
+    hycom_abs_sum: torch.Tensor | None = None
+    wn2_abs_sum:   torch.Tensor | None = None
+    n_processed = 0
 
-    # HYCOM: mean |IG| over (batch=1, member, depth) -> one score per channel
+    for start in range(0, n_cells, cells_per_chunk):
+        end = min(start + cells_per_chunk, n_cells)
+        h_chunk = hycom_t[start:end].clone().requires_grad_(True)
+        w_chunk = wn2_t[start:end].clone().requires_grad_(True)
+
+        attr = ig.attribute(
+            (h_chunk, w_chunk),
+            baselines=(torch.zeros_like(h_chunk), torch.zeros_like(w_chunk)),
+            n_steps=n_steps,
+            internal_batch_size=5,
+        )
+        h_abs = attr[0].detach().abs().sum(dim=0)  # (M, depth, 4)
+        w_abs = attr[1].detach().abs().sum(dim=0)  # (M, seq_len, 5)
+
+        if hycom_abs_sum is None:
+            hycom_abs_sum = h_abs
+            wn2_abs_sum   = w_abs
+        else:
+            hycom_abs_sum += h_abs
+            wn2_abs_sum   += w_abs
+        n_processed += (end - start)
+
+    hycom_abs_mean = hycom_abs_sum / n_processed   # (M, depth, 4)
+    wn2_abs_mean   = wn2_abs_sum   / n_processed   # (M, seq_len, 5)
+
     hycom_scores = {
-        HYCOM_CHANNEL_NAMES[c]: float(hycom_abs[..., c].mean())
+        HYCOM_CHANNEL_NAMES[c]: float(hycom_abs_mean[..., c].mean())
         for c in range(len(HYCOM_CHANNEL_NAMES))
     }
-
-    # WN2: mean |IG| over (batch=1, member, time_steps) -> one score per feature
     atm_scores = {
-        ATM_FEATURE_NAMES[f]: float(wn2_abs[..., f].mean())
+        ATM_FEATURE_NAMES[f]: float(wn2_abs_mean[..., f].mean())
         for f in range(len(ATM_FEATURE_NAMES))
     }
 
-    # Gate value — forward pass to get gate without IG overhead
+    # Gate aggregated across all cells × members (mini-batched to avoid OOM)
+    gate_chunks: list[torch.Tensor] = []
+    bs = 32
     with torch.no_grad():
-        _, _, gate = model(hycom_t, wn2_t)
-    gate_mean = float(gate[0].mean())
+        for start in range(0, n_cells, bs):
+            end = start + bs
+            _, _, g = model(hycom_t[start:end], wn2_t[start:end])
+            gate_chunks.append(g)
+    gate_mean = float(torch.cat(gate_chunks, dim=0).mean())
 
     return atm_scores, hycom_scores, gate_mean
 
@@ -398,7 +436,31 @@ def main():
         wn2_merged  = xr.Dataset(fake_data)
         era5_model  = MHWRiskModel().to(device)
         wn2_model   = MHWRiskModel().to(device)
+    elif args.use_gcs:
+        import os
+        from src.ingestion.harvester import DataHarmonizer
+        bucket = os.environ.get("MHW_GCS_BUCKET", "").rstrip("/")
+        if not bucket:
+            raise RuntimeError("MHW_GCS_BUCKET env var not set for --use-gcs.")
+        
+        harmonizer = DataHarmonizer()
+        print(f"Loading val data from {bucket}...")
+        
+        # 2023 is our validation year
+        hycom_val = xr.open_zarr(f"{bucket}/hycom/tiles/2023/", chunks="auto")
+        era5_val  = xr.open_zarr(f"{bucket}/era5/2023/", chunks="auto")
+        wn2_val   = xr.open_zarr(f"{bucket}/weathernext2/cache/wn2_2023-01-01_2023-12-31_m64.zarr", chunks="auto")
+        
+        print("Harmonizing ERA5 val...")
+        era5_merged = harmonizer.harmonize(era5_val, hycom_val)
+        print("Harmonizing WN2 val...")
+        wn2_merged  = harmonizer.harmonize(wn2_val, hycom_val)
+        
+        era5_model = load_model(args.era5_weights, device)
+        wn2_model  = load_model(args.wn2_weights,  device)
     else:
+        if not args.era5_data or not args.wn2_data:
+            raise ValueError("Must provide --era5-data and --wn2-data or use --use-gcs.")
         era5_merged = xr.open_zarr(args.era5_data)
         wn2_merged  = xr.open_zarr(args.wn2_data)
         era5_model  = load_model(args.era5_weights, device)

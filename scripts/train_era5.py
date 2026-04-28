@@ -172,43 +172,76 @@ def main():
         json.dump(config, fh, indent=2)
 
     model     = MHWRiskModel().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
 
-    hycom_t_train = hycom_t_train.to(device)
-    wn2_t_train   = wn2_t_train.to(device)
-    label_t_train = label_t_train.to(device)
-    hycom_t_val   = hycom_t_val.to(device)
-    wn2_t_val     = wn2_t_val.to(device)
-    label_t_val   = label_t_val.to(device)
+    # Move tensors to CPU before Dataset creation to save GPU VRAM
+    # We will move each mini-batch to GPU inside the loop
+    from torch.utils.data import DataLoader, TensorDataset
+    train_ds = TensorDataset(hycom_t_train, wn2_t_train, label_t_train)
+    val_ds   = TensorDataset(hycom_t_val, wn2_t_val, label_t_val)
+    
+    # Batch size of 32 cells (each with 64 members) -> ~2,000 profiles per step
+    # This fits well within 16GB VRAM even with Transformer attention.
+    batch_size = 32
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
     log_rows = []
     best_val_loss = float("inf")
+    patience = 10
+    trigger_times = 0
 
     for epoch in range(1, args.epochs + 1):
-        # --- Training step ---
+        # --- Training phase ---
         model.train()
-        sdd_pred, _, gate = model(hycom_t_train, wn2_t_train)
-        train_loss = F.mse_loss(sdd_pred, label_t_train)
-        optimizer.zero_grad()
-        train_loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-        optimizer.step()
+        epoch_train_loss = 0.0
+        for h_batch, w_batch, l_batch in train_loader:
+            h_batch, w_batch, l_batch = h_batch.to(device), w_batch.to(device), l_batch.to(device)
+            
+            sdd_pred, _, _ = model(h_batch, w_batch)
+            loss = F.mse_loss(sdd_pred, l_batch)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            optimizer.step()
+            
+            epoch_train_loss += loss.item() * h_batch.size(0)
+        
+        avg_train_loss = epoch_train_loss / len(train_ds)
+        scheduler.step()
 
-        # --- Validation step (no gradient) ---
+        # --- Validation phase ---
         model.eval()
+        epoch_val_loss = 0.0
+        val_preds = []
+        val_gates = []
         with torch.no_grad():
-            sdd_val, _, _ = model(hycom_t_val, wn2_t_val)
-            val_loss = F.mse_loss(sdd_val, label_t_val)
+            for h_batch, w_batch, l_batch in val_loader:
+                h_batch, w_batch, l_batch = h_batch.to(device), w_batch.to(device), l_batch.to(device)
 
-        v95   = sdd_val[0].quantile(0.95).item()  # batch=1: index 0 is the only sample
-        v50   = sdd_val[0].quantile(0.50).item()
-        v05   = sdd_val[0].quantile(0.05).item()
-        sprd  = v95 - v05
-        gm    = gate[0].mean().item()
+                sdd_val, _, gate = model(h_batch, w_batch)
+                loss = F.mse_loss(sdd_val, l_batch)
+
+                epoch_val_loss += loss.item() * h_batch.size(0)
+                val_preds.append(sdd_val.cpu())
+                val_gates.append(gate.cpu())
+
+        avg_val_loss = epoch_val_loss / len(val_ds)
+
+        # Flatten all cell predictions for quantile analysis
+        all_preds = torch.cat(val_preds, dim=0)  # (N_cells, member)
+        v95  = all_preds.quantile(0.95).item()
+        v50  = all_preds.quantile(0.50).item()
+        v05  = all_preds.quantile(0.05).item()
+        sprd = v95 - v05
+        # Aggregate gate across all val cells × members (not just last batch)
+        gm   = torch.cat(val_gates, dim=0).mean().item()
 
         row = {
-            "epoch": epoch, "train_loss": round(train_loss.item(), 6),
-            "val_loss": round(val_loss.item(), 6),
+            "epoch": epoch, "train_loss": round(avg_train_loss, 6),
+            "val_loss": round(avg_val_loss, 6),
             "SVaR_95": round(v95, 4), "SVaR_50": round(v50, 4),
             "SVaR_05": round(v05, 4), "spread": round(sprd, 4),
             "gate_mean": round(gm, 4),
@@ -217,17 +250,31 @@ def main():
 
         print(
             f"Epoch {epoch:03d}/{args.epochs} | "
-            f"train={train_loss.item():.4f} | val={val_loss.item():.4f} | "
+            f"train={avg_train_loss:.4f} | val={avg_val_loss:.4f} | "
             f"SVaR_95={v95:.2f} | spread={sprd:.2f} | gate={gm:.3f}"
         )
 
-        if val_loss.item() < best_val_loss:
-            best_val_loss = val_loss.item()
+        # Early Stopping & Best Model Check
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            trigger_times = 0
             torch.save(model.state_dict(), f"data/models/{PREFIX}_best_weights.pt")
+        else:
+            trigger_times += 1
+            if trigger_times >= patience:
+                print(f"Early stopping at epoch {epoch}")
+                break
 
     # Final weights
     torch.save(model.state_dict(), f"data/models/{PREFIX}_weights.pt")
     print(f"Weights -> data/models/{PREFIX}_weights.pt")
+
+    # Reload best-val weights for downstream plots + SVaR inference, so early-stop
+    # patience-degraded final state is not what gets reported.
+    best_path = f"data/models/{PREFIX}_best_weights.pt"
+    if Path(best_path).exists():
+        model.load_state_dict(torch.load(best_path, map_location=device))
+        print(f"Reloaded best-val weights from {best_path} for SVaR + plots")
 
     # Training log CSV
     with open(f"data/results/{PREFIX}_training_log.csv", "w", newline="") as fh:
