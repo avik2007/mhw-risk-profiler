@@ -137,7 +137,16 @@ def build_tensors(
         [merged[v].mean(dim="time").values for v in HYCOM_VARS],
         axis=-1,
     )  # (member, depth, lat, lon, 4)
-    
+
+    # Forward-fill NaN below seafloor: shallow cells have NaN at depth levels
+    # below the local seafloor; repeat the last valid value downward so
+    # AdaptiveAvgPool1d sees a smooth flat tail instead of NaN.
+    for _d in range(1, hycom_raw.shape[1]):
+        _nan = np.isnan(hycom_raw[:, _d, :, :, :])
+        hycom_raw[:, _d, :, :, :] = np.where(
+            _nan, hycom_raw[:, _d - 1, :, :, :], hycom_raw[:, _d, :, :, :]
+        )
+
     # WN2: last seq_len days -> (member, seq_len, lat, lon, 5)
     wn2_raw = np.stack(
         [merged[v].isel(time=slice(-seq_len, None)).values for v in WN2_VARS],
