@@ -125,7 +125,11 @@ def build_tensors(
     land_mask = ~threshold_regrid.isel(dayofyear=0).isnull()
     # Also ensure SST is valid (non-zero/non-NaN)
     sst_valid = ~sst_celsius.isel(member=0, time=0).isnull()
-    combined_mask = land_mask & sst_valid
+    # WN2 SST is NaN at coastal/land cells in WN2's land-sea mask (persistent across all
+    # time steps and members). Exclude those cells to prevent NaN loss during WN2 training.
+    # No-op for ERA5 runs (ERA5 SST is complete over the full domain).
+    wn2_sst_valid = ~merged["sea_surface_temperature"].isel(member=0, time=0).isnull()
+    combined_mask = land_mask & sst_valid & wn2_sst_valid
 
     # 4. Extract valid cell indices
     lats, lons = np.where(combined_mask.values)
