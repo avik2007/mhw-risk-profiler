@@ -1,35 +1,18 @@
 # MHW Gemini Recent Actions
 
+- [2026-04-27] **Session 30 — Transformer Embedding Architecture Review:**
+    - **Technical Deep-Dive (@scientist):** Documented the transformation of WeatherNext 2 (WN2) atmospheric forcing data from 5 raw physical variables to a 128-dimensional latent embedding. 
+    - **Architecture Rationale:** Explained that the `nn.Linear(5, 128)` projection in `TransformerEncoder` serves as a "feature expansion" layer. It maps compressed physical units ([T2M, U, V, MSLP, SST]) into a high-dimensional latent space, enabling the subsequent Transformer layers to extract complex non-linear synergies (e.g., wind-threshold effects and pressure-temperature interactions).
+    - **Dimensional Symmetry:** Confirmed that the choice of 128 dimensions ensures architectural parity with the `CNN1dEncoder` (processing HYCOM depth data), facilitating symmetric feature fusion via the `LeakyGate` mechanism.
+- [2026-04-26] **Session 29 — Regularization, Spatial Batching & XAI Deep-Dive:**
+    - **XAI Analysis (@scientist):** Conducted a deep-dive into the Integrated Gradients (IG) discrepancy. Confirmed that while ERA5 (proxy) over-attributes to meridional (V) wind, WN2 correctly identifies zonal (U) wind as the primary driver. Explained that the white noise ($\sigma=0.3$ m/s) in the ERA5 proxy blunted the delicate zonal dynamics (Ekman transport), whereas WN2's physical ensemble preserves these correlations.
+    - **Refactor (@reviewer):** Upgraded `scripts/_train_utils.py` to transition from spatial-average training ($N=1$ per year) to cell-level spatial batching ($N \approx 357$ ocean cells per year). This significantly increases sample diversity and provides a more robust defense against overfitting.
+    - **Optimization (@scientist):** Upgraded the training protocol in `scripts/train_era5.py` and `scripts/train_wn2.py`. Replaced `Adam` with `AdamW` (L2 regularization, `weight_decay=1e-2`) and implemented `CosineAnnealingLR` for better convergence. Added an early stopping mechanism (patience=10) and a mini-batch `DataLoader` to manage memory.
+    - **XAI Tooling Upgrade:** Updated `scripts/compare_xai.py` with a `--use-gcs` flag to allow direct loading and harmonization of validation data from GCS, enabling end-to-end real data comparison.
+    - **Validation:** Verified the entire new training and batching logic with a 5-epoch dry-run of `train_era5.py`.
 - [2026-04-20] **Session 17 — Scientific Critique of Training Strategy & WN2 Plan:**
     - **Scientific Review (@scientist):** Flagged the **2-year climatology baseline (2022-2023)** as a critical failure in scientific integrity. Explained that a 90th percentile from 2 samples is effectively the maximum, rendering MHW detection and SDD/SVaR results mathematically meaningless.
     - **Technical Review (@reviewer):** Identified three "blocker" flaws in Claude's WN2 fix plan: (1) **Cache Poisoning** due to persistent `_daily/` GCS subdirectories, (2) **Land Mask Inconsistency** between SST and atmospheric variables, and (3) **Unit Mismatch** (Kelvin vs Celsius) between WN2 and HYCOM.
     - **Action Taken:** Created `mhw_gemini_actions/mhw_gemini_scientific_critique_v1.md` with detailed recommendations.
     - **Intervention:** Prepended a 🛑 **CRITICAL** warning to `mhw_claude_todo.md` directing Claude to the critique before proceeding with WN2 training.
-- [2026-04-17] **Session 9 — Automated Agent Validation & Pipeline Audit:**
-    - **Agent Deployment**: Initialized and released `@scientist`, `@reviewer`, `@ingestor`, and `@auditor` subagents in `.gemini/agents/`.
-    - **Engineering Audit (@reviewer)**: Identified high-risk race conditions in `scripts/run_hycom_months_prep.py` due to lack of coordination for parallel GCS writes. Flagged brittle idempotency checks in `harvester.py` relying solely on `.zmetadata`.
-    - **Scientific Audit (@scientist)**: Validated Hobday (2016) compliance for MHW/SDD logic. Identified **Critical Scientific Risk**: The 2-year climatology baseline (2022-2023) used in `run_data_prep.py` is statistically insufficient for production; recommended 10-30 year baseline extension.
-    - **Read-Only Enforcement**: Confirmed all audits performed in read-only mode; no code modifications were applied.
-- [2026-04-14] **Review of Proxy Training and XAI (Claude):** Validated Claude's Session 2 artifacts and `scripts/compare_xai.py` implementation.
-    - **Convergence:** Confirmed `train_era5.py` dry-run (30 epochs) achieved significant loss reduction (train: 122→66; val: 105→57), indicating model capacity to learn from synthetic features.
-    - **Artifacts:** Verified generation of diagnostic plots (`loss_curve`, `svar_curve`, `gate_hist`, `pred_vs_actual`) and `era5_svar.zarr` via the new synthetic inference path.
-    - **XAI Physical Interpretation:** Confirmed `save_attribution_plots()` docstring in `compare_xai.py` satisfies CLAUDE.md §4, specifically documenting the physical and financial significance of Integrated Gradients (IG) for all 9 input variables.
-    - **Performance:** Noted `internal_batch_size=5` in IG computation as a critical fix for Transformer attention memory limits (~3.3 GB peak avoidance).
-- [2026-04-14] **Review of GCP Data Pipeline (Claude):** Completed expert evaluation of Claude's Session 1 changes across `src/ingestion/` and `scripts/`.
-    - **Docstrings:** Confirmed `HYCOMLoader.fetch_and_cache()` and `ERA5Harvester.fetch_and_cache()` satisfy CLAUDE.md §4.
-    - **Logic:** Verified `run_data_prep.py` correctly reads from GCS (avoiding second OPeNDAP fetch) and writes `sst_threshold_90` key.
-    - **Consistency:** Confirmed all `xr.open_zarr()` calls use `chunks="auto"`. Removed all outdated constant references (`ERA5_TRAIN_PERIOD`, `WN2_TRAIN_PERIOD`, `GCS_BUCKET`) from `scripts/` and `src/`.
-    - **Validation:** Confirmed 55/55 tests passed. Successfully ran `train_era5.py` and `train_wn2.py` dry-runs; both achieved stable training steps and diagnostic plot generation.
-- [2026-04-10] **Comprehensive Pipeline Evaluation:** Reviewed and validated the completion of the ERA5/WN2 Dual Training Plan.
-    - **Data Ingestion:** Confirmed `harvester.py` and `era5_harvester.py` correctly handle HYCOM vertical interpolation (Hybrid Coordinate to Z-level) and GEE ImageCollection sampling.
-    - **Training Infrastructure:** Validated `_train_utils.py` and `train_era5.py` implementation of the SETS framework, specifically the physics-based SDD labels and SVaR quantile estimation (95/50/05).
-    - **Explainable AI (XAI):** Reviewed `compare_xai.py` implementation of **Integrated Gradients (IG)**. Confirmed use of `internal_batch_size=5` to manage Transformer attention memory (preventing ~3.3 GB peak RAM spikes) and targeting of the latent fusion layer for attribution.
-- [2026-04-10] **Scientific & Financial Review of Payout Logic:**
-    - **Attribution Analysis:** Formulated a rigorous definition of attribution (Axiom of Completeness) as a "differential accounting" of model signal versus baseline.
-    - **Payout Structure Research:** Verified that the **Piecewise Linear Payout Function** (Attachment, Cap, Linear Proportional Payout) is an industry-standard practice for 2024-2026 aquaculture insurance.
-    - **Source Verification:** Cited UNEP Finance Initiative, Willis/Rare partnership, AXA Climate, and Bozec et al. (2025, *Nature Communications*) as the foundational research for using environmental indices (SDD/DHW) as automatic parametric triggers.
-- [2026-04-10] **Project Plan Update:** Identified immediate next actions for the "Pre-WeatherNext Analytics" phase: implementing `src/analytics/payout.py` (Parametric Payout Engine) and `scripts/compute_hycom_climatology.py` (90th-percentile Threshold Generation).
-- [2026-04-02] Created `GEMINI.md` with role mandates, scientific targets (SVaR, ensemble spread, confusion matrix, XAI), and technical constraints.
-- [2026-04-02] Initialized `mhw_gemini_actions/` directory with tracking files.
-- [2026-04-02] Conducted expert ML review of `src/models/`: validated 1D-CNN depth-profile encoder, Transformer temporal context, and LeakyGate fusion architecture.
-- [2026-04-02] Conducted scientific review of `src/analytics/`: validated MHW detection (Hobday 2016), SDD accumulation, and SVaR engine.
+...

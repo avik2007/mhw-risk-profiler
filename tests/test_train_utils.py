@@ -49,9 +49,10 @@ def test_build_tensors_shapes():
     threshold = _make_threshold()
     hycom_t, wn2_t, label_t = build_tensors(merged, threshold, seq_len=SEQ_LEN)
 
-    assert hycom_t.shape == (1, 4, 11, 4), f"HYCOM shape mismatch: {hycom_t.shape}"
-    assert wn2_t.shape   == (1, 4, SEQ_LEN, 5), f"WN2 shape mismatch: {wn2_t.shape}"
-    assert label_t.shape == (1, 4), f"label shape mismatch: {label_t.shape}"
+    n_cells = 4 * 5  # all synthetic cells are valid (no NaN in test data)
+    assert hycom_t.shape == (n_cells, 4, 11, 4), f"HYCOM shape mismatch: {hycom_t.shape}"
+    assert wn2_t.shape   == (n_cells, 4, SEQ_LEN, 5), f"WN2 shape mismatch: {wn2_t.shape}"
+    assert label_t.shape == (n_cells, 4), f"label shape mismatch: {label_t.shape}"
 
 
 def test_build_tensors_dtype():

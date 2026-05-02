@@ -5,6 +5,70 @@
 
 ---
 
+## ACTIVE — Option B parallel retrain on 2 VMs (relaunched 2026-04-30 after NaN fix)
+
+**LinkedIn deadline: 2026-05-01**
+
+| | VM | Zone | PID | Log | Status |
+|---|---|---|---|---|---|
+| ERA5 | mhw-training | us-central1-c, e2-highmem-8 | 184046 | ~/train_era5.log | ✅ COMPLETE — best ep 5. Results NOT yet pulled. |
+| WN2  | mhw-training-wn2 | us-central1-c, e2-highmem-8 | 79192  | ~/train_wn2.log | ✅ COMPLETE — best ep 11, val_loss=0.077224, gate≈0.445, spread=0.217. Results pulled locally. |
+
+Running `python scripts/train_*.py --epochs 50` on **25c9d02** (f522bbd + forward-fill NaN fix).
+
+### Bug found + fixed (session 30, 2026-04-30)
+Both runs launched 2026-04-27 crashed silently — all metrics NaN from epoch 1, early-stop at epoch 10.
+**Root cause:** `build_tensors` land mask checked only `water_temp[depth=0]`. Shallow coastal cells (GoM continental shelf) pass the surface check but have NaN at depth levels 2–10 (below local seafloor). 194,560/627,968 (31%) of `hycom_t` values were NaN → CNN forward → NaN loss → NaN gradients → corrupt weights.
+**Fix (commit 25c9d02):** forward-fill NaN along depth axis after computing `hycom_raw`. Last valid depth value propagated downward; `AdaptiveAvgPool1d` averages smoothly across all depth levels.
+
+### WN2 NaN — RESOLVED (session 31, commit 88a5fe2)
+WN2 SST NaN for ~86/357 GoM cells (all 365 days, all 64 members) — WN2 land-sea mask omits SST at coastal cells. Fix: `wn2_sst_valid` mask added to `build_tensors()`. n_cells 223→161. Verified clean: hycom_NaN=0, wn2_NaN=0, label_NaN=0 for both 2022 (train) and 2023 (val).
+
+### Note: stdout block-buffered
+Python stdout redirected to log file = block-buffered. Epoch lines don't appear in log until buffer fills or script exits. Use file timestamps (config.json, best_weights.pt) to monitor progress — not `tail`.
+
+### Pull results
+- [x] WN2 results pulled → `data/results_wn2/results/`
+- [ ] ERA5 results NOT yet pulled — `gcloud compute scp --recurse mhw-training:~/mhw-risk-profiler/data/results/ data/results_era5/ --zone=us-central1-c`
+
+### WN2 results review (session 31) — gate collapse + flat pred-vs-actual
+- WN2 trained 21 epochs, best ep 11 (val_loss=0.077224). Early stopped at ep 21.
+- Gate stable ~0.44 throughout. No per-cell differentiation.
+- Flat pred-vs-actual: model predicts ~1.25–1.40 normalized regardless of actual SDD (0.5–2.1).
+- Root cause: deterministic HYCOM labels (all 64 members identical) → no gradient signal for spatial gate differentiation or spread estimation.
+- Spread grew 0.009→0.217 but reflects ONLY the WN2 atmospheric input noise, not actual HYCOM label variance.
+- **Same diagnosis applies to ERA5 run (best ep 5).**
+- Fix options: (A) quantile loss — cheap partial improvement; (B) P5 OISST 30yr retraining — correct fix.
+
+### After ERA5 results pulled
+- [ ] Run final XAI: `MHW_GCS_BUCKET=gs://mhw-risk-cache GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/compare_xai.py --use-gcs --n-steps 50`
+- [ ] Validate "Zonal Wind Story" (WN2 → U-wind > V-wind, ERA5 → blunted by σ=0.3 noise)
+- [ ] Stop mhw-training-wn2 (and possibly mhw-training) to halt VM costs — after LinkedIn validated
+- [ ] Draft LinkedIn copy — review with user before publishing
+
+### Cleanup pending
+- [ ] Decide whether to keep `mhw-data-prep-img` (T4-baked, blocks e2 reuse) or delete + replace with `mhw-training-img`
+- [ ] `~/results_pre_optionB/` and `~/models_pre_optionB/` on mhw-training — keep until LinkedIn validated, then remove
+- [ ] `~/results_imaged/` and `~/models_imaged/` on mhw-training-wn2 — same
+
+---
+
+## DONE — Session 29 (2026-04-27)
+
+- ✅ Reviewed Gemini session 29 spatial-batching upgrade via `code-review-graph::detect_changes`
+- ✅ Found + fixed 5 bugs (commit f522bbd, pushed to origin/main):
+  1. compare_xai.get_season_tensors stale spatial-mean → per-cell with `.contiguous()`
+  2. save_plots cell-0-only gate hist + scatter → flatten across all cells × members
+  3. save_plots full-tensor forward → mini-batch
+  4. train_*.py gate_mean = last batch → accumulate val_gates across all batches
+  5. SVaR + plots used last-epoch weights → reload best_weights.pt before inference
+- ✅ Smoke-tested all 3 scripts via dry-run (all green)
+- ✅ Provisioned 2nd VM via fresh no-GPU machine image (workaround for `mhw-data-prep-img` T4 lock-in)
+- ✅ Backed up prior mhw-training results to `~/results_pre_optionB/`
+- ✅ Both training runs launched in parallel on f522bbd code
+
+---
+
 ## DONE (sessions 24–27)
 
 - SDD label fix (commit 79853d7), ERA5 retrain done (train=63k, val=38k, SVaR_95=1.34, spread=0)
@@ -18,10 +82,11 @@
 
 ---
 
-## QUEUED — README figure polish (post-commit)
+## QUEUED — README/GitHub visualization polish (priority 3, after LinkedIn)
 
 - [ ] WN2 mean SST plot: mask cold-blue artifact pixels (Cape Cod coastal WN2 cells with ~0°C values leaking through; clip values < 5°C or apply stricter NaN mask in `generate_spatial_figures.py`)
 - [ ] Network diagram: review sublabel font sizes at final dpi — may need further compression
+- [ ] Push polished figures + README updates to GitHub
 
 ---
 
@@ -160,6 +225,46 @@ Spot-check merged dataset: coordinate names, units, `cell_methods` on aggregated
 **Expected outputs:**
 - `data/results/plots/wn2_*.png`
 - `data/results/xai/xai_comparison_real.json` — ERA5 vs WN2 IG, all 4 seasons
+
+---
+
+## QUEUED — GeoAI Inference Orchestrator Pivot (Thread 4) — PRIORITY 4
+
+**Trigger:** WN2 SVaR review accepted + LinkedIn ERA5 post published + README/GitHub viz polish merged.
+**Plan file:** `docs/superpowers/plans/2026-04-25-geoai-orchestrator-pivot.md`
+**Source:** `mhw_ai_research/Gemini-Iterative Weather Model Pipeline Thread 4.txt`
+
+**Locked decisions (D1–D6):**
+- D1 engine: GraphCast v1; Aurora as future-state generalization
+- D2 FGN: Perlin/spatially-coherent noise on initial conditions ("Poor Man's FGN"); latent-space injection deferred
+- D3 CRPS: skip v1; revisit if extremes underpredicted
+- D4 init conditions: ERA5 via GEE v1; HRES/GFS future-state
+- D5 scope: wrap existing `harvester.py` + `era5_harvester.py`, no rip
+- D6 GPU: T4 if quota approved, CPU fallback acceptable for v1
+
+**Phases:**
+- [ ] Phase 0 — prerequisites green (WN2 review + LinkedIn + GitHub viz done; GPU status known)
+- [ ] Phase 1 — `src/providers/` skeleton: `base.py`, `weathernext.py` wrapper, `era5.py` wrapper, schema tests
+- [ ] Phase 2 — `realtime.py` (ERA5 GEE near-real-time fetch + GCS cache)
+- [ ] Phase 3 — `graphcast_emulator.py` (stock weights, 10-day rollout, day-0 RMSE smoke vs ERA5 < 1°C)
+- [ ] Phase 4 — `fgn_wrapper.py` (N=64 Perlin perturbations, ensemble spread Spearman > 0.7 vs WN2 overlap)
+- [ ] Phase 5 — CRPS fine-tune (skipped v1, doc only)
+- [ ] Phase 6 — `configs/settings.yaml` + `scripts/run_profiler.py --model {wn2|graphcast}`
+- [ ] Phase 7 — README reframe ("Foundation Model Orchestrator for Spatial Finance"), `mhw-repo-architecture.md` update, recentactions append
+- [ ] Phase 8 — validation gates (schema, smoke, spread, backtest 2023, end-to-end on yesterday)
+
+**Future-state generalizations (post-v1):**
+- Aurora provider (multi-modal, thermocline-sensitive)
+- Latent-space FGN injection (`h_{t+1}=GNN(h_t,z)`)
+- CRPS / Energy Score fine-tune
+- HRES / GFS realtime providers
+- Vertex AI deployment (ties to existing P8)
+
+**Risks:**
+- GraphCast weight license — confirm derivative inference allowed
+- `graphcast` package JAX/CUDA pinning
+- Perlin σ calibration (HYCOM spread=0 complicates baseline; use ERA5+synthetic as fallback)
+- HRES open-data license (future-state)
 
 ---
 

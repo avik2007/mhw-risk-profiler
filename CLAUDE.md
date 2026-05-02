@@ -165,6 +165,16 @@ See **`mondal-mhw-gcp-info.md`** (git-ignored) for bucket name, service account 
 [2026-04-20] OISST native lon is 0-360; GoM bbox sel(lon=slice(-71,-66)) returns empty on direct files — use ncdcOisst21Agg_LonPM180 ERDDAP dataset which uses -180/180 convention
 [2026-04-20] Parallel GEE sessions (2 WN2 years simultaneously) cause gRPC [Errno 11] resource exhaustion — run WN2 years sequentially on same machine
 [2026-04-20] WN2 annual _build_dataset() concat mixes zarr-backed daily stores (with encoding) + in-memory stores — pop chunks encoding + rechunk({"time":30}) before _gcs_safe_write in fetch_and_cache()
+[2026-04-27] Spatial-batching refactor: audit all downstream `[0]` indexes + `mean(dim=...)` ops; save_plots gate/scatter sliced cell-0 only, compare_xai still spatial-mean → OOD inputs to per-cell-trained model
+[2026-04-27] After early-stop training, model holds last-epoch state — must load_state_dict({prefix}_best_weights.pt) before final inference/plots/SVaR or report patience-degraded metrics
+[2026-04-27] gate.mean() at end of mini-batch val loop = last batch only (overwritten each iter); accumulate val_gates inside loop, cat+mean outside
+[2026-04-27] Captum IG per-cell budget: keep cells_per_chunk=1 × internal_batch_size=5 × M=64 → same 320-profile budget as old (1,M) pipeline; accumulate attr.abs().sum(dim=0), divide by n_processed
+[2026-04-27] Model uses .view() not .reshape() — call .contiguous() + explicit .to(torch.float32) on tensors built from xarray .values before model input
+[2026-04-27] GCE machine-image with attached GPU rejects new instances on non-GPU machine families in all zones (--accelerator count=0 also rejected); snapshot a clean no-GPU instance into fresh image instead
+[2026-04-30] build_tensors land mask checked only HYCOM depth=0; shallow shelf cells pass but have NaN at depths 2–10 → 31% of hycom_t NaN → NaN loss from epoch 1; fix: forward-fill along depth axis after computing hycom_raw
+[2026-04-30] Python stdout block-buffered when redirected to file (nohup >>); use file timestamps (config.json, best_weights.pt) to monitor training progress, not tail
+[2026-05-01] WN2 SST is NaN for ~86/357 GoM cells (all 365 days, all 64 members) — WN2 land-sea mask omits SST at coastal cells where only atmospheric vars are defined; fix: add wn2_sst_valid mask in build_tensors (n_cells 223→161)
+[2026-05-01] test_build_tensors_shapes had wrong expected n_cells=1; correct value is n_lat×n_lon (all synthetic cells valid) — pre-existing bug, not caused by masking changes
 
 ## Pre-/clear Protocol
 

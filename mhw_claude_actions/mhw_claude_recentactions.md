@@ -4,6 +4,109 @@
 
 ---
 
+## [2026-05-01] Session 31 — WN2 SST NaN root cause found + fixed; WN2 training complete; results reviewed; gate collapse diagnosed
+
+### What happened
+- **WN2 all-NaN (root cause 2) diagnosed.** After HYCOM depth NaN fix (commit 25c9d02), WN2 still produced all-NaN loss from epoch 1 on the new run.
+  - Diagnostic: `wt.isnan().float().mean(dim=[1,2,3])` per cell → exactly 0.2 for 62/223 affected cells = 1/5 WN2 vars fully NaN.
+  - Confirmed in raw WN2 zarr: `sea_surface_temperature` NaN for 86/357 GoM cells, ALL 365 days, ALL 64 members; 4 other vars (U10, V10, 2m_temp, MSLP) = 0 NaN.
+  - Root cause: WeatherNext 2 is an atmospheric model; SST defined only as lower boundary condition. Land-sea mask omits SST for coastal cells (lat 41–44.27°N in GoM domain). Not a data bug — by design.
+  - Of 86 NaN cells, 62 passed the HYCOM ocean mask into `build_tensors` → 1/5 vars = 20% NaN per cell → NaN loss.
+- **Fix (commit 88a5fe2):** Added `wn2_sst_valid = ~merged["sea_surface_temperature"].isel(member=0, time=0).isnull()` to combined mask in `build_tensors()`. Reduces n_cells 223→161. No-op for ERA5 (ERA5 SST fully covers domain). Verified: both 2022 and 2023 show hycom_NaN=0, wn2_NaN=0, label_NaN=0.
+- **WN2 training relaunched** (PID 79192) on 88a5fe2 code via VM pull. Set up 30-min cron monitor (job f8c5cb4f, fired twice). Deleted after training confirmed COMPLETE.
+- **WN2 results pulled** to `data/results_wn2/results/` via `gcloud compute scp`. 21 epochs, best ep 11, val_loss=0.077224. Early stopped at ep 21. All 5 plots confirmed on disk.
+- **Reviewed WN2 training results:**
+  - Gate collapsed to ~0.445 (vs ERA5 ~0.25) with no per-cell differentiation.
+  - Flat pred-vs-actual: model predicts ~1.25–1.40 normalized regardless of actual SDD spanning 0.5–2.1.
+  - Spread grew 0.009→0.217 but reflects only WN2 atmospheric input noise, not HYCOM label variance.
+  - Root cause: HYCOM labels deterministic (all 64 members identical) → no gradient for gate differentiation or spread signal.
+  - Same pattern expected for ERA5 (best ep 5, results not yet pulled).
+- **pre-existing test bug fixed:** `test_build_tensors_shapes` expected `n_cells=1` but correct value is `n_lat×n_lon=20`. Fixed assertion to `n_cells = 4 * 5`.
+- **Interview prep discussion:** Covered LeakyGate design, SVaR definition (quantile across 64 WN2 members), WN2 ensemble structure (64 independent FGN-perturbed trajectories), XAI via Integrated Gradients.
+
+### Key decisions
+- WN2 SST NaN fix: filter cells (option A) chosen over forward-fill (option B: atmospheric ≠ ocean, physically wrong to fill) or drop SST from WN2 vars (option C: SST is the key signal for SDD labels).
+- P5 (30yr OISST retraining) identified as primary fix for flat pred-vs-actual + gate collapse. Quantile loss as cheap partial improvement if P5 is deferred.
+- Stop VMs after LinkedIn post validated (not done this session — ERA5 results not yet pulled).
+
+### Next
+- Pull ERA5 results from mhw-training VM.
+- Run `compare_xai.py` on both ERA5 + WN2 results; validate Zonal Wind Story.
+- Draft LinkedIn copy with user (ERA5 + WN2 results both available).
+- Stop VMs to halt costs.
+
+---
+
+## [2026-04-30] Session 30 — Diagnosed + fixed all-NaN training crash; relaunched both VMs; ERA5 confirmed converging
+
+### What happened
+- **Checked Claude Code version** — already on latest (2.1.123, released 2026-04-29).
+- **Checked both VMs** — both runs launched 2026-04-27 crashed by 2026-04-28 02:18–02:42 (all metrics NaN from epoch 1, early-stop at epoch 10, crash in `save_plots`).
+- **Root cause diagnosed** (systematic debugging, Phase 1-3):
+  - `build_tensors` land mask used `~sst_celsius.isel(member=0, time=0).isnull()` (HYCOM depth=0 only).
+  - Shallow GoM continental shelf cells (most of the 17×21 grid) pass depth=0 check but have NaN at depth levels 2–10 below their seafloor (depth level NaN counts: depth[2]=3/223 cells → depth[10]=220/223 cells).
+  - Diagnostic confirmed: `hycom_t NaN: 194,560 / 627,968` (31%), `wn2_t NaN: 0`, `label_t NaN: 0`.
+  - NaN propagated through CNN1dEncoder → NaN loss → NaN gradients → all weights corrupt after epoch 1 → epochs 2–10 also NaN.
+- **Fix applied (commit 25c9d02):** forward-fill NaN along depth axis in `_train_utils.build_tensors` after computing `hycom_raw`. Loop depth levels 1→10, replace NaN with value from level above. `AdaptiveAvgPool1d` designed for this — averages smooth flat tail rather than NaN.
+- **Relaunched both VMs** (25c9d02 code):
+  - ERA5: PID 184046, config written 23:35, `era5_best_weights.pt` updated 23:42 → **confirmed converging**.
+  - WN2: PID 56235, still in `load_real_data()` (WN2 has 64 real ensemble members vs ERA5's 1-member-expanded → larger GCS fetch).
+- **Note added to todo:** Python stdout block-buffered when redirected → use file timestamps (config.json, best_weights.pt) to monitor, not `tail`.
+- **Discussed Vertex AI:** Custom Training Jobs + Vizier HPO are the most relevant services for this project (= P8 in todo). AutoML/Model Garden not applicable to custom CNN+Transformer architecture.
+
+### Key decisions
+- Forward-fill chosen over zero-fill (zero creates artificial sharp gradients at seafloor boundary; forward-fill gives smooth flat tail consistent with AdaptiveAvgPool1d's depth-invariance design) and over cell-filtering (would reduce 223→3 cells).
+- LinkedIn deadline 2026-05-01 still in range — ERA5 training live.
+
+### Next
+- Wait for both runs to finish (ERA5 converging, WN2 loading). Monitor via `era5_best_weights.pt` / `wn2_best_weights.pt` timestamps.
+- Pull results + models via gcloud compute scp (see todo for commands).
+- Review loss curves, gate hist, pred-vs-actual, SVaR map.
+- Run compare_xai.py, validate Zonal Wind Story, draft LinkedIn copy.
+
+---
+
+## [2026-04-27] Session 29 — Audited Gemini's spatial-batching upgrade; landed 5 fix commits; launched Option B parallel retrain on 2 VMs
+
+### What happened
+- **Reviewed Gemini session 29 work** (cell-level spatial batching, AdamW + CosineAnnealingLR + early stop, `--use-gcs` flag on compare_xai). Used `code-review-graph::detect_changes` for diff-aware risk analysis (risk score 0.4).
+- **Found 5 bugs** introduced by the spatial-batching transition that Gemini didn't update downstream:
+  1. `compare_xai.get_season_tensors` still spatial-mean → fed OOD `(1, M, …)` inputs to a model trained on per-cell `(N_cells, M, …)`. IG attribution would be unreliable (LinkedIn central claim at risk).
+  2. `_train_utils.save_plots` gate hist + pred-vs-actual sliced cell-0 only post-refactor.
+  3. `_train_utils.save_plots` forward-passed full val tensor (~22k profiles) → Transformer OOM risk.
+  4. Train scripts logged `gate.mean()` from last mini-batch only, not aggregated across val cells.
+  5. SVaR inference + plots used last-epoch weights, not best-val weights — early-stop patience-degraded state was being reported.
+- **Patched all 5** (commit f522bbd):
+  - `get_season_tensors` returns per-cell tensors with `.contiguous()` + `.to(torch.float32)`.
+  - `run_season_ig` chunks IG over cells (`cells_per_chunk=1` keeps prior memory budget) and aggregates gate.
+  - `save_plots` mini-batches forward + flattens `gate_vals`/`pred_vals`/`actual_vals` across all cells × members.
+  - Train scripts accumulate `val_gates` across all batches; reload `{prefix}_best_weights.pt` before SVaR + plots.
+- **Smoke-tested**: `compare_xai --dry-run --n-steps 5`, `train_era5 --dry-run --epochs 2`, `train_wn2 --dry-run --epochs 2` — all green; "Reloaded best-val weights" log line confirms.
+- **Pushed f522bbd to origin/main** (user explicitly approved push for this session).
+- **Launched Option B parallel retrain across 2 VMs:**
+  - **mhw-training** (us-central1-c, e2-highmem-8) — ERA5, PID 130377, log `~/train_era5.log`. Backup of prior results to `~/results_pre_optionB/` and `~/models_pre_optionB/` (cp not mv — originals stay until overwritten by new run).
+  - **mhw-training-wn2** (NEW VM, us-central1-c, e2-highmem-8) — WN2, PID 1095, log `~/train_wn2.log`.
+- **VM provisioning detour**: `mhw-data-prep` was TERMINATED; start blocked by us-central1-a stockout. `mhw-data-prep-img` had T4 hard-attached and rejected `e2-highmem-8` in every zone tried (us-central1-b/c/f, us-east1-b/c/d, us-west1-a/b). Workaround: snapshotted running `mhw-training` (no-GPU) into new machine image `mhw-training-img`, then created `mhw-training-wn2` from that.
+
+### Key decisions
+- Rolled with Option B (full retrain on fixed pipeline) over Option A (rerun XAI only). Justification: training-loop fixes are diagnostic-only, but Option B gives every artifact internally consistent for the LinkedIn post.
+- Explicit user push approval used surgically: only `scripts/_train_utils.py`, `scripts/compare_xai.py`, `scripts/train_era5.py`, `scripts/train_wn2.py` committed in f522bbd.
+- May 1 LinkedIn deadline accepted; 4-day buffer.
+
+### Next
+- Wait for both training runs to finish (expected 5–10 hr each, parallel; early-stop patience=10 may shorten).
+- Check `~/train_era5.log` + `~/train_wn2.log` and `data/results/{era5,wn2}_training_log.csv` for convergence + `gate_mean` aggregated stats.
+- Pull both `data/results/` + `data/models/` locally via `gcloud compute scp`.
+- Run `compare_xai.py --use-gcs --n-steps 50` (locally or on a VM) to generate real-data IG attribution plots — first time on per-cell in-distribution inputs.
+- Validate "Zonal Wind Story" (WN2 attributing to U-wind / ERA5 to V-wind per Gemini's analysis).
+- Draft LinkedIn copy with user.
+
+### VM cleanup reminder
+- After XAI run + result review: stop `mhw-training-wn2` to avoid idle costs (or delete if not needed for repeat runs).
+- Old machine image `mhw-data-prep-img` still has T4 baked in — leave alone unless project pivots to GPU.
+
+---
+
 ## [2026-04-22] Session 28 — monitoring SVaR/IG inference; both scripts still running post-training
 
 ### What happened

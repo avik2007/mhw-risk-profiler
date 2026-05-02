@@ -32,6 +32,18 @@
 
 ---
 
+## [2026-04-27] Spatial-batching refactor downstream effects + GCE machine-image GPU lock-in
+
+- When refactoring training inputs from spatial-mean (1, M, …) to per-cell (N_cells, M, …), audit ALL downstream code that consumed the old shape: `save_plots` gate hist / scatter that index `[0]` will silently slice cell-0 only; XAI scripts using spatial-mean tensors will feed OOD inputs to the trained model and produce unreliable attributions. Lesson: refactors that change tensor shape need a hand-trace of every `[0]` index and every `mean(dim=...)` in dependent code, not just the changed file.
+- After spatial-batching, Captum IG with `(N_cells, M, …)` per-cell tensors needs cell-chunking. Default `internal_batch_size=5` was tuned for `(1, M=64)` → 320-profile budget. With `cells_per_chunk × M × internal_batch_size`, keep `cells_per_chunk=1` to preserve the same budget; iterate over cells and accumulate `attr.abs().sum(dim=0)`, divide by `n_processed` at end.
+- Model uses `view()` (not `reshape`) for member-flatten — non-contiguous tensors from numpy advanced/scalar indexing fail. Always `.contiguous()` and explicitly `.to(torch.float32)` on tensors built from xarray `.values` before feeding the model.
+- Mini-batch any forward pass that feeds the full validation tensor (~N_cells × 64 sequences) to a Transformer-based model; one shot allocates the full attention matrix and OOMs even on 64GB VMs.
+- After training with early stopping (`patience=N`), the in-memory `model` holds the last-epoch state, NOT the best-val state. Always `model.load_state_dict(torch.load(f"{prefix}_best_weights.pt"))` before any final inference / plotting / SVaR generation, otherwise reported metrics reflect the patience-degraded final epoch.
+- Logging `gate.mean().item()` at the end of a mini-batch validation loop captures only the LAST mini-batch's gate (variable is overwritten each iteration). Accumulate `val_gates.append(gate.cpu())` inside the loop and `torch.cat(val_gates).mean()` outside for honest aggregation.
+- **GCE machine-image GPU lock-in**: a machine image created from an instance with an attached GPU (e.g. T4) carries the accelerator config such that creating a new instance from it on a non-GPU machine family (e2/n2) fails with `[machine-type, accelerator-type] features are not compatible` in EVERY zone. `--accelerator=type=...,count=0` is also rejected. Workaround: snapshot a CLEAN no-GPU running instance into a fresh machine image and provision from that. Don't bake GPU into machine images intended for reuse.
+
+---
+
 ## [2026-04-10] Captum IG + large member dimension causes disk thrashing
 
 - With `N_MEMBERS=64` and Captum's default full-batch IG (`n_steps=50`), the effective Transformer batch is `n_steps × M = 50 × 64 = 3200`. Attention weights `(3200, 8, 90, 90)` consume ~828 MB per layer × 4 layers = ~3.3 GB, exhausting RAM and hammering swap to disk.
@@ -81,5 +93,14 @@ disown $!
 ```
 Set env vars inline before the command. `disown` ensures the shell releases the process
 before the SSH session closes.
+
+---
+
+## [2026-05-01] Session 31 — WN2 SST land-sea mask NaN + test assertion fix
+
+- **WN2 SST NaN root cause:** WeatherNext 2 is an atmospheric model that defines SST only as a lower boundary condition. Its land-sea mask omits SST for ~86/357 GoM grid cells (persistent across all 365 days and all 64 members). The 4 other WN2 vars (U10, V10, 2m_temp, MSLP) are complete everywhere. Of the 86 NaN cells, 62 passed the HYCOM ocean mask into `build_tensors`, giving 1/5 vars = 20% NaN per cell = NaN loss from epoch 1.
+- **Fix (commit 88a5fe2):** Added `wn2_sst_valid = ~merged["sea_surface_temperature"].isel(member=0, time=0).isnull()` to the combined mask in `build_tensors`. Reduces n_cells 223→161. No-op for ERA5 (ERA5 SST fully covers the domain).
+- **Diagnostic pattern:** `wt.isnan().float().mean(dim=[1,2,3])` per cell showed exactly 0.2 for affected cells — immediately identifiable as exactly 1 of 5 vars being fully NaN. Then confirmed by checking raw WN2 zarr: 86 cells NaN for ALL 365 days, 0 partial-NaN cells.
+- **test_build_tensors_shapes pre-existing bug:** Expected n_cells=1 but correct value is n_lat×n_lon=20 (all synthetic cells valid, no NaN in test data). Fixed assertion to `n_cells = 4 * 5`.
 
 ---
