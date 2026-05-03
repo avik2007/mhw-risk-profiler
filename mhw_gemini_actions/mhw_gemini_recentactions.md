@@ -1,5 +1,9 @@
 # MHW Gemini Recent Actions
 
+- [2026-05-02] **Session 31 — Strategic Pivot to GLORYS12V1:**
+    - **Research:** Investigated temporal availability of WeatherNext 2 (WN2) and found that while GEE has 4+ years (2022-2026), our current pipeline is capped at 2023 by HYCOM's end-of-life in Sept 2024.
+    - **Strategy (@scientist):** Identified **GLORYS12V1** (Copernicus Global Ocean Physics Reanalysis) as the optimal replacement. It offers 1/12° resolution and temporal coverage through March 2026.
+    - **Decision:** Set a long-term goal to transition to GLORYS12V1 after the OISST climatology integration. This will expand our training/validation horizon to 4 years, significantly improving the statistical robustness of our SDD/SVaR estimates.
 - [2026-04-27] **Session 30 — Transformer Embedding Architecture Review:**
     - **Technical Deep-Dive (@scientist):** Documented the transformation of WeatherNext 2 (WN2) atmospheric forcing data from 5 raw physical variables to a 128-dimensional latent embedding. 
     - **Architecture Rationale:** Explained that the `nn.Linear(5, 128)` projection in `TransformerEncoder` serves as a "feature expansion" layer. It maps compressed physical units ([T2M, U, V, MSLP, SST]) into a high-dimensional latent space, enabling the subsequent Transformer layers to extract complex non-linear synergies (e.g., wind-threshold effects and pressure-temperature interactions).

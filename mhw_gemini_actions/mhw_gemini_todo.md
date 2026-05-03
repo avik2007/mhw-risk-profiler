@@ -3,6 +3,7 @@
 - [x] Analyze IG attribution discrepancy between ERA5 and WN2 (Zonal vs. Meridional wind).
 - [x] Implement regularization improvements (AdamW, L2, CosineAnnealingLR) and spatial batching to prevent overfitting.
 - [x] Update `compare_xai.py` to support `--use-gcs` loading.
+- [ ] **GLORYS12V1 Integration (Strategic Goal):** Transition from HYCOM to GLORYS12V1 after OISST work to enable 4+ years of modeling (2022-2026). Requires `harvester.py` rewrite for CMEMS API.
 - [ ] Monitor regression loss (MSE) and SVaR stability for the 2022/2023 dual training runs on GCP using the new batching logic.
 - [ ] Review the final XAI comparison plots (`ig_attribution_*.png`) once Claude completes the real data run.
 

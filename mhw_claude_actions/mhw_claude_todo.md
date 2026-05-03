@@ -46,6 +46,16 @@ Python stdout redirected to log file = block-buffered. Epoch lines don't appear 
 - [ ] Stop mhw-training-wn2 (and possibly mhw-training) to halt VM costs — after LinkedIn validated
 - [ ] Draft LinkedIn copy — review with user before publishing
 
+---
+
+## 🎯 STRATEGIC GOAL: GLORYS12V1 Transition (Post-OISST)
+Gemini has identified **GLORYS12V1** (Copernicus Global Ocean Physics Reanalysis) as the replacement for HYCOM once the OISST integration is complete. 
+- **Objective:** Extend modeling from 2 years to **4+ years (2022-2026)**.
+- **Rationale:** WN2 has 4+ years of data in GEE, but we are currently capped by HYCOM's end-of-life in Sept 2024. GLORYS12V1 provides 1/12° resolution through March 2026.
+- **Impact:** Significant increase in statistical robustness for SDD/SVaR and improved XAI validity.
+
+---
+
 ### Cleanup pending
 - [ ] Decide whether to keep `mhw-data-prep-img` (T4-baked, blocks e2 reuse) or delete + replace with `mhw-training-img`
 - [ ] `~/results_pre_optionB/` and `~/models_pre_optionB/` on mhw-training — keep until LinkedIn validated, then remove
