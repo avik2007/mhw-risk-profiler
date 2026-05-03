@@ -147,9 +147,13 @@ def get_season_tensors(
     time_mask = merged["time"].dt.month.isin(season_months).values  # numpy bool array
     merged_season = merged.isel(time=time_mask)
 
-    # Identify valid ocean cells using HYCOM water_temp[depth=0] (matches build_tensors)
+    # Identify valid ocean cells: HYCOM water_temp[depth=0] AND WN2 SST both non-NaN.
+    # WN2 SST is undefined at coastal cells (atmospheric model land-sea mask) — mirrors
+    # the wn2_sst_valid fix in _train_utils.build_tensors (commit 88a5fe2).
     sst_celsius = merged_season["water_temp"].isel(depth=0)  # (member, time, lat, lon)
-    valid_mask = ~sst_celsius.isel(member=0, time=0).isnull()
+    hycom_valid = ~sst_celsius.isel(member=0, time=0).isnull()
+    wn2_sst_valid = ~merged_season["sea_surface_temperature"].isel(member=0, time=0).isnull()
+    valid_mask = hycom_valid & wn2_sst_valid
     lats, lons = np.where(valid_mask.values)
     n_cells = len(lats)
 
