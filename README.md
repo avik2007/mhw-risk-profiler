@@ -151,10 +151,3 @@ docker run --env-file .env mhw-risk-profiler python -m src.analytics.var_engine
 | HYCOM | NetCDF | THREDDS / direct download | 0.08 deg, daily | 3D thermohaline, subsurface profiles |
 
 Harmonization target: daily, 0.25-degree global grid, aligned time axis, CF-compliant NetCDF/Zarr.
-
----
-
-## Research Inputs
-
-Background literature synthesis and hypothesis framing are in `mhw_ai_research/` (git-ignored).
-See Gemini and Perplexity deep-dives for the scientific basis of threshold choices and model selection.
