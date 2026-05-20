@@ -288,6 +288,8 @@
       <button id="btn-wn2"  onclick="showMap('wn2')">WeatherNext 2 Model</button>
     </div>
 
+    <p id="map-label" style="font-size:.85rem;color:var(--muted);margin:.75rem 0 .5rem"></p>
+
     <div class="chart-card p-2">
       <div id="chart-map" style="height:500px"></div>
     </div>
@@ -492,15 +494,13 @@ function renderMap(svarMap, source) {
     ? 'ERA5 Model — reanalysis + synthetic ensemble'
     : 'WeatherNext 2 Model — 64-member physical ensemble';
 
+  document.getElementById('map-label').innerHTML =
+    `<strong>${label}</strong> &middot; Illustrative (synthetic inputs, real model weights)`;
+
   const layout = {
     plot_bgcolor:  '#ffffff',
     paper_bgcolor: '#ffffff',
-    margin: { l: 0, r: 0, t: 45, b: 0 },
-    annotations: [{
-      text: `<b>${label}</b> · Illustrative (synthetic inputs, real model weights)`,
-      x: 0.5, y: 1.06, xref: 'paper', yref: 'paper', showarrow: false,
-      font: { color: '#5a6e8c', size: 12 },
-    }],
+    margin: { l: 0, r: 0, t: 10, b: 0 },
     geo: {
       scope: 'north america',
       projection: { type: 'mercator' },
