@@ -5,35 +5,33 @@
 
 ---
 
-## ACTIVE — GitHub Pages Dashboard (~24h, Option B)
+## ✅ DONE — GitHub Pages Dashboard (Session 35 — 2026-05-19)
 
-**Goal:** Static github.io portfolio page. Engineering story, not science claims. XAI as "methodology demo, v2 coming."
-**Stack:** `docs/index.html` + Plotly.js CDN + `docs/data/*.json`. Zero build step. GitHub Pages from `/docs` on `main`.
-**Framing:** Pipeline + architecture + attention analysis = credible portfolio piece. No VaR/spread claims (spread=0 makes them hollow).
+**Status:** All dashboard work complete and pushed to `main`. LinkedIn post drafted.
 
-### Dashboard sections
-1. Hero — title, tagline, GitHub link
-2. Data Pipeline — HYCOM + ERA5/WN2 → harmonize → GCS → model (diagram)
-3. Architecture — 1D-CNN + Transformer + LeakyGate (existing network diagram)
-4. Attention Analysis — GoM choropleth, gate weight per cell, ERA5 vs WN2 toggle
-5. Training Results — loss curves ERA5 vs WN2, gate histogram
-6. Roadmap — v1 limitations → v2 (GLORYS12V1 stochastic labels, 30yr OISST)
+### What shipped
+- `docs/index.html`: light theme, 90-day atmosphere+ocean mission framing, WN2 primary / ERA5 legacy comparison, land-masked SVaR map (270 ocean cells via Natural Earth 10m), HTML map label, no em-dashes
+- `scripts/run_dashboard_inference.py`: full 357-cell synthetic inference, real model weights
+- `scripts/export_dashboard_json.py`: land mask (cartopy+shapely), ocean-only cells
+- `docs/data/svar_map.json`: 270 ocean cells (era5 + wn2)
+- `docs/assets/plots/`: 10 training PNGs (loss, gate, pred_vs_actual, spread, svar curves)
+- `docs/assets/plots/dashboard/`: 4 LinkedIn-ready PNGs (loss_curve, gate_chart, svar_map_era5, svar_map_wn2)
 
-### Build steps
-- [ ] **Step 0** — Pull ERA5 results from `mhw-training` VM; check if compare_xai finished; stop both VMs
-  - Pull cmd: `gcloud compute scp --recurse mhw-training:~/mhw-risk-profiler/data/results/ data/results_era5/ --zone=us-central1-c`
-  - Check XAI: `gcloud compute ssh mhw-training --zone=us-central1-c -- "ls -lh ~/mhw-risk-profiler/data/results/xai/ 2>/dev/null || echo MISSING"`
-  - Stop VMs: `gcloud compute instances stop mhw-training mhw-training-wn2 --zone=us-central1-c`
-- [ ] **Step 1** — `scripts/export_dashboard_json.py`: reads training CSVs + model weights → gate-per-cell JSON + loss JSON + cell lat/lon GeoJSON
-- [ ] **Step 2** — `docs/index.html`: Plotly choropleth map + line charts + architecture diagram embed
-- [ ] **Step 3** — Polish framing copy, "v1" badges on results, roadmap section
-- [ ] **Step 4** — Enable GitHub Pages from `/docs` on `main`, verify live URL
+### One remaining action
+- [ ] **Enable GitHub Pages**: repo Settings → Pages → Source: main branch, /docs folder → Save
+  Then verify `https://avik2007.github.io/mhw-risk-profiler/`
 
-### Prerequisites (from session 32 / recent actions)
-- `mhw-training` VM likely still running — has ERA5 results (NOT pulled locally) + compare_xai output (launched 2026-05-02, may have finished)
-- WN2 results confirmed local: `data/results_wn2/results/` (5 PNGs + wn2_training_log.csv)
-- ERA5 model weights: on VM only. WN2 weights: likely in `data/results_wn2/` or `data/models/`
-- compare_xai: if finished, output in `~/mhw-risk-profiler/data/results/xai/` on VM
+---
+
+## ⏸ PROJECT ON PAUSE
+
+Resuming when significant time is available. Next priorities in order:
+
+### [NEXT-1] Publish LinkedIn post
+- Draft written (session 35). Use `gate_chart.png` + `svar_map_wn2.png` as visuals.
+- Enable GitHub Pages first so the link is live.
+
+### [NEXT-2] v2 Science (major effort, weeks of work)
 
 ---
 

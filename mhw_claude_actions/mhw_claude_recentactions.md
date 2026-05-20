@@ -4,6 +4,57 @@
 
 ---
 
+## [2026-05-19] Session 35 — Dashboard polish, land mask, LinkedIn assets; project paused
+
+### What happened
+- **Resumed from session 34.** Ran `export_dashboard_json.py` → `svar_map.json` regenerated with 357 cells. Committed + pushed all session 34 work (commits 240eacd).
+- **Land mask fix:** `export_dashboard_json.py` now uses Natural Earth 10m land polygons (cartopy + shapely `unary_union`) to filter land cells before export. 357 → 270 ocean-only cells. Commit 4c9a0f6.
+- **Hero text rewrite:** Removed em-dash. Led with 90-day atmosphere+ocean mission: "fuse 90-day atmospheric ensemble forecasts with 3D ocean depth data to predict marine heatwaves before they arrive." Added WN2 as primary model / ERA5 as legacy comparison framing. Commit 58b9996.
+- **Map label moved to HTML:** Plotly annotation caused persistent positioning issues (too low, then invisible). Moved to `<p id="map-label">` above the chart card; updated by JS on source toggle. Commit 9fb06fd.
+- **Training plots copied:** 10 PNGs from `data/results_{era5,wn2}/results/plots/` copied to `docs/assets/plots/`. Commit 3fd650d.
+- **Static dashboard PNGs generated:** `scripts/export_dashboard_pngs.py` written; renders loss_curve, gate_chart, svar_map_era5, svar_map_wn2 at 2× scale using plotly + kaleido 0.2.1 (v1 fails in WSL2 — needs Chrome). Output: `docs/assets/plots/dashboard/`. Commit 8a74592.
+- **LinkedIn post drafted** (in conversation, not committed): leads with 90-day forecast mission, gate divergence finding (ERA5 α≈0.26 vs WN2 α≈0.44), dashboard link.
+
+### Key decisions
+- Natural Earth 10m is accurate enough for 0.25° grid land masking; no need for higher resolution.
+- kaleido v0.2.1 (not v1) required for headless PNG export in WSL2 — Chrome unavailable.
+- Project going on pause after this session. Resume when significant time available.
+
+### State at pause
+- All code committed and pushed to `main` (HEAD: 8a74592).
+- GitHub Pages NOT YET ENABLED — one manual step remaining in repo settings.
+- LinkedIn post drafted but not published — enable Pages first so link is live.
+
+### Resume checklist
+1. Enable GitHub Pages: repo Settings → Pages → main, /docs
+2. Verify `https://avik2007.github.io/mhw-risk-profiler/`
+3. Post LinkedIn draft (gate_chart.png + svar_map_wn2.png as visuals)
+4. v2: 30-yr OISST baseline + GLORYS12V1 + stochastic labels (weeks of work)
+
+---
+
+## [2026-05-19] Session 34 — Dashboard UI refresh; full-grid SVaR inference fixed and ran; export script updated
+
+### What happened
+- **UI redesign applied to `docs/index.html`** (session 33 feedback): light/bright theme (bg #f0f6ff, white cards), non-technical recruiter-facing intro paragraph added to hero, architecture image full-width (no max-height cap), pipeline flipped horizontal with larger nodes (min-width 680px, overflow-x auto), Plotly white background, gate chart labeled "α (0 = atmosphere · 1 = ocean)".
+- **`scripts/run_dashboard_inference.py` debugged and fixed.** Script loads real Option B model weights + creates spatially-structured synthetic inputs (lat/lon-dependent temperature bias + per-cell seeded RNG) for all 17×21 GoM cells. Bug: zarr v3 changed API — `create_dataset` requires `shape` kwarg; `create_array` with `data=` accepts no `dtype=` alongside. Fixed to `store.create_array(name, data=arr)`.
+- **Full-grid inference ran successfully.** ERA5 and WN2 zarrs saved to `data/results_dashboard/` with all 357 cells (vs 5 cells in old partial inference zarrs).
+- **`scripts/export_dashboard_json.py` updated** to read from `data/results_dashboard/era5_svar_dashboard.zarr` and `data/results_dashboard/wn2_svar_dashboard.zarr` instead of `data/results_era5/results/era5_svar.zarr`.
+
+### What is NOT done yet (resume here)
+- `docs/data/svar_map.json` needs regeneration (run `export_dashboard_json.py`)
+- Nothing committed this session — all 4 changed files still unstaged
+- GitHub Pages not yet enabled
+
+### Next
+1. Run `/home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/export_dashboard_json.py`
+2. Verify svar_map.json has ~357 entries for both era5 and wn2
+3. Commit: docs/index.html + scripts/run_dashboard_inference.py + scripts/export_dashboard_json.py + docs/data/svar_map.json
+4. Enable GitHub Pages (repo Settings → Pages → main branch → /docs)
+5. Verify `https://avik2007.github.io/mhw-risk-profiler/`
+
+---
+
 ## [2026-05-19] Session 33 — Strategic pivot to GitHub Pages dashboard; dashboard v1 built and committed
 
 ### What happened
