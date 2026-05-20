@@ -14,10 +14,23 @@ import math
 import numpy as np
 import pandas as pd
 import zarr
+import cartopy.io.shapereader as shpreader
+import shapely.geometry as sgeom
+from shapely.ops import unary_union
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT  = os.path.join(BASE, "docs", "data")
 os.makedirs(OUT, exist_ok=True)
+
+# Build land mask once — Natural Earth 10m resolution
+_shp = shpreader.Reader(
+    shpreader.natural_earth(resolution='10m', category='physical', name='land')
+)
+_LAND_GEOM = unary_union([rec.geometry for rec in _shp.records()])
+
+
+def _is_ocean(lat: float, lon: float) -> bool:
+    return not _LAND_GEOM.contains(sgeom.Point(lon, lat))
 
 
 def _to_list(arr):
@@ -83,7 +96,7 @@ print(f"  wrote {path}")
 print("Reading SVaR zarr files...")
 
 def load_svar_cells(zarr_path):
-    """Return list of {lat, lon, svar95, svar50, spread} for non-NaN cells."""
+    """Return list of {lat, lon, svar95, svar50, spread} for ocean cells only."""
     z    = zarr.open(zarr_path)
     lat  = np.array(z["latitude"])
     lon  = np.array(z["longitude"])
@@ -93,14 +106,16 @@ def load_svar_cells(zarr_path):
     cells = []
     for i in range(len(lat)):
         for j in range(len(lon)):
-            if not math.isnan(float(s95[i, j])):
-                cells.append({
-                    "lat":    round(float(lat[i]), 2),
-                    "lon":    round(float(lon[j]), 2),
-                    "svar95": round(float(s95[i, j]), 2),
-                    "svar50": round(float(s50[i, j]), 2),
-                    "spread": round(float(sprd[i, j]), 4),
-                })
+            la, lo = float(lat[i]), float(lon[j])
+            if math.isnan(float(s95[i, j])) or not _is_ocean(la, lo):
+                continue
+            cells.append({
+                "lat":    round(la, 2),
+                "lon":    round(lo, 2),
+                "svar95": round(float(s95[i, j]), 2),
+                "svar50": round(float(s50[i, j]), 2),
+                "spread": round(float(sprd[i, j]), 4),
+            })
     return cells
 
 

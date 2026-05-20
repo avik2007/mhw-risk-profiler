@@ -108,12 +108,13 @@
     <h1>Marine Heatwave Risk Profiler</h1>
 
     <p class="hero-intro mx-auto">
-      Marine heatwaves are invisible climate events that push ocean temperatures far above
-      normal — threatening fish populations, salmon farms, and kelp forests that coastal
-      economies depend on. This project combines real ocean depth data, satellite observations,
-      and a 64-member AI weather ensemble to estimate <em>where</em> and <em>how severely</em>
-      thermal stress will hit across the Gulf of Maine — giving aquaculture operators and
-      climate insurers a data-driven map of financial risk.
+      The goal of this project is to fuse <strong>90-day atmospheric ensemble forecasts</strong>
+      with <strong>3D ocean depth data</strong> to predict marine heatwaves before they arrive.
+      Google's WeatherNext&nbsp;2 model generates 64 independent atmosphere simulations per forecast;
+      HYCOM tracks temperature, salinity, and currents at 10 depth levels below the surface.
+      A deep learning model learns to combine both streams and estimate cumulative heat stress
+      across every ocean cell in the Gulf of Maine, up to 90 days in advance, giving aquaculture
+      operators and climate insurers a forward-looking map of financial exposure.
     </p>
 
     <div class="mt-4">
@@ -134,8 +135,8 @@
 <section>
   <div class="container">
     <p class="section-label">How It Works</p>
-    <h2 class="section-title">From Ocean Observations to Financial Risk</h2>
-    <p class="section-sub">Two years of daily data — harmonized to a shared 0.25° grid, stored in Google Cloud.</p>
+    <h2 class="section-title">Atmosphere + Ocean Simulations to 90-Day Risk</h2>
+    <p class="section-sub">Two years of daily data harmonized to a shared 0.25° grid, stored in Google Cloud.</p>
 
     <div class="pipeline-wrap mt-4">
       <div class="pipeline-flow">
