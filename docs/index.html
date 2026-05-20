@@ -8,183 +8,191 @@
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     :root {
-      --bg:       #0f172a;
-      --surface:  #1e293b;
-      --border:   #334155;
-      --text:     #f1f5f9;
-      --muted:    #94a3b8;
-      --era5:     #3b82f6;
-      --wn2:      #10b981;
-      --accent:   #38bdf8;
-      --warn:     #f59e0b;
+      --bg:       #f0f6ff;
+      --surface:  #ffffff;
+      --border:   #dde4f0;
+      --text:     #1a2540;
+      --muted:    #5a6e8c;
+      --era5:     #1d6fe8;
+      --wn2:      #0ea472;
+      --accent:   #0d84d6;
+      --warn:     #d97706;
+      --warnbg:   #fffbeb;
+      --warnbdr:  #fcd34d;
     }
-    body { background: var(--bg); color: var(--text); font-family: "Inter", system-ui, sans-serif; }
-    a    { color: var(--accent); text-decoration: none; }
+    body   { background: var(--bg); color: var(--text); font-family: "Inter", system-ui, sans-serif; }
+    a      { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
+    section { padding: 4rem 0; border-top: 1px solid var(--border); }
 
-    /* Navbar */
-    .navbar { background: rgba(15,23,42,.95); border-bottom: 1px solid var(--border); backdrop-filter: blur(8px); }
-    .navbar-brand { font-weight: 700; letter-spacing: -.02em; color: var(--accent) !important; }
-    .nav-gh { border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; font-size: .875rem; color: var(--muted) !important; }
+    /* ── Navbar ── */
+    .navbar { background: #ffffff; border-bottom: 1px solid var(--border); box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+    .navbar-brand { font-weight: 800; font-size: 1.1rem; color: var(--text) !important; letter-spacing: -.02em; }
+    .nav-gh { border: 1px solid var(--border); border-radius: 6px; padding: 5px 14px; font-size: .85rem; font-weight: 600; color: var(--muted) !important; transition: all .15s; }
     .nav-gh:hover { border-color: var(--accent); color: var(--accent) !important; }
 
-    /* Hero */
-    .hero { padding: 6rem 0 4rem; background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(56,189,248,.08) 0%, transparent 70%); }
-    .hero h1 { font-size: clamp(2rem, 5vw, 3.25rem); font-weight: 800; letter-spacing: -.03em; }
-    .hero .lead { color: var(--muted); font-size: 1.125rem; max-width: 600px; margin: 0 auto; }
-    .stat-chip { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: .35rem .9rem; font-size: .8rem; font-weight: 600; color: var(--muted); display: inline-block; margin: .25rem; }
-    .stat-chip span { color: var(--text); }
+    /* ── Hero ── */
+    .hero { padding: 5rem 0 3.5rem; background: linear-gradient(160deg, #eaf3ff 0%, #f8fbff 60%, #edfaf4 100%); border-top: none; }
+    .hero h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 900; letter-spacing: -.04em; color: var(--text); }
+    .hero-intro { font-size: 1.1rem; color: var(--muted); max-width: 720px; margin: 1rem auto 0; line-height: 1.7; }
+    .stat-chip { background: #ffffff; border: 1px solid var(--border); border-radius: 999px; padding: .4rem 1rem; font-size: .82rem; font-weight: 700; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; margin: .3rem; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .stat-chip .val { color: var(--text); font-size: .95rem; }
 
-    /* Section */
-    section { padding: 4rem 0; border-top: 1px solid var(--border); }
-    .section-label { font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: .5rem; }
-    .section-title { font-size: clamp(1.4rem, 3vw, 2rem); font-weight: 700; letter-spacing: -.02em; }
-    .section-sub { color: var(--muted); margin-top: .5rem; }
+    /* ── Section labels ── */
+    .section-label { font-size: .72rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: .4rem; }
+    .section-title  { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 800; letter-spacing: -.03em; color: var(--text); }
+    .section-sub    { font-size: 1rem; color: var(--muted); margin-top: .5rem; }
 
-    /* Cards */
-    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
-    .card-title { font-size: 1rem; font-weight: 600; }
+    /* ── Cards ── */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
 
-    /* Pipeline */
-    .pipeline-flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 1rem 0; }
-    .pipe-node { flex: 1; min-width: 130px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem .75rem; text-align: center; position: relative; }
-    .pipe-node .pipe-icon { font-size: 1.5rem; margin-bottom: .4rem; }
-    .pipe-node .pipe-name { font-size: .8rem; font-weight: 700; color: var(--text); }
-    .pipe-node .pipe-sub  { font-size: .7rem; color: var(--muted); margin-top: .25rem; }
-    .pipe-arrow { display: flex; align-items: center; padding: 0 .35rem; color: var(--border); font-size: 1.25rem; flex-shrink: 0; }
+    /* ── Pipeline (horizontal) ── */
+    .pipeline-wrap { overflow-x: auto; padding-bottom: .5rem; }
+    .pipeline-flow { display: flex; align-items: stretch; gap: 0; min-width: 680px; }
+    .pipe-node { flex: 1; background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.4rem 1rem; text-align: center; }
+    .pipe-node.highlight { border-color: var(--accent); background: #f0f8ff; }
+    .pipe-icon  { font-size: 2rem; margin-bottom: .5rem; display: block; }
+    .pipe-name  { font-size: .9rem; font-weight: 800; color: var(--text); }
+    .pipe-sub   { font-size: .75rem; color: var(--muted); margin-top: .3rem; line-height: 1.4; }
+    .pipe-arrow { display: flex; align-items: center; justify-content: center; padding: 0 .5rem; font-size: 1.5rem; color: #c0cfe4; flex-shrink: 0; }
 
-    /* Badge */
-    .v1-badge { background: rgba(245,158,11,.15); border: 1px solid rgba(245,158,11,.4); color: var(--warn); border-radius: 5px; font-size: .7rem; font-weight: 700; padding: 2px 7px; letter-spacing: .06em; }
-    .v2-badge { background: rgba(16,185,129,.12); border: 1px solid rgba(16,185,129,.35); color: var(--wn2); border-radius: 5px; font-size: .7rem; font-weight: 700; padding: 2px 7px; letter-spacing: .06em; }
+    /* ── Architecture ── */
+    .arch-img-wrap { background: #f8faff; border: 1.5px solid var(--border); border-radius: 14px; padding: 1.5rem; text-align: center; }
+    .arch-img-wrap img { width: 100%; max-width: 700px; height: auto; }
+    .arch-bullet { font-size: .95rem; color: var(--muted); margin: .85rem 0; padding-left: 1rem; border-left: 3px solid var(--border); line-height: 1.55; }
+    .arch-bullet strong { color: var(--text); display: block; margin-bottom: .15rem; }
 
-    /* Chart containers */
-    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
-    .chart-title { font-size: .875rem; font-weight: 700; color: var(--muted); margin-bottom: .75rem; text-transform: uppercase; letter-spacing: .06em; }
-    .plotly-chart { width: 100%; }
+    /* ── Charts ── */
+    .chart-card { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    .chart-head { font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 1rem; }
 
-    /* Map toggle */
+    /* ── Map ── */
     .map-toggle { display: flex; gap: .5rem; margin-bottom: 1rem; }
-    .map-toggle button { background: var(--surface); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: .35rem 1rem; font-size: .85rem; font-weight: 600; cursor: pointer; transition: all .15s; }
-    .map-toggle button.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,.08); }
+    .map-toggle button { background: var(--surface); border: 1.5px solid var(--border); color: var(--muted); border-radius: 8px; padding: .45rem 1.2rem; font-size: .875rem; font-weight: 700; cursor: pointer; transition: all .15s; }
+    .map-toggle button.active-era5 { border-color: var(--era5); color: var(--era5); background: #eff5ff; }
+    .map-toggle button.active-wn2  { border-color: var(--wn2);  color: var(--wn2);  background: #effaf5; }
 
-    /* Architecture */
-    .arch-img { width: 100%; max-height: 380px; object-fit: contain; border-radius: 8px; background: #fff; padding: 1rem; }
-    .arch-bullet { font-size: .9rem; color: var(--muted); margin: .6rem 0; padding-left: .75rem; border-left: 2px solid var(--border); }
-    .arch-bullet strong { color: var(--text); }
+    /* ── Roadmap ── */
+    .roadmap-card { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.5rem 1.75rem; height: 100%; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    .roadmap-card h3 { font-size: 1rem; font-weight: 800; margin-bottom: 1rem; }
+    .road-item { display: flex; align-items: flex-start; gap: .7rem; margin: .75rem 0; font-size: .9rem; color: var(--muted); line-height: 1.5; }
+    .road-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: .35rem; }
 
-    /* Roadmap */
-    .roadmap-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem 1.5rem; height: 100%; }
-    .roadmap-item { display: flex; align-items: flex-start; gap: .6rem; margin: .6rem 0; font-size: .875rem; color: var(--muted); }
-    .roadmap-item .dot { width: 6px; height: 6px; border-radius: 50%; margin-top: .45rem; flex-shrink: 0; }
+    /* ── Badges ── */
+    .v1-badge { background: var(--warnbg); border: 1px solid var(--warnbdr); color: var(--warn); border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; letter-spacing: .05em; }
+    .v2-badge { background: #f0fdf4; border: 1px solid #6ee7b7; color: #059669;  border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; letter-spacing: .05em; }
+    .caveat { background: var(--warnbg); border: 1px solid var(--warnbdr); border-radius: 10px; padding: .85rem 1.1rem; font-size: .85rem; color: var(--warn); }
 
-    /* Caveat box */
-    .caveat { background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.25); border-radius: 8px; padding: .75rem 1rem; font-size: .8rem; color: var(--warn); margin-bottom: 1rem; }
+    /* ── Stats ── */
+    .stat-card { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    .stat-label { font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .stat-val   { font-size: 2.25rem; font-weight: 900; line-height: 1.1; margin: .3rem 0; }
+    .stat-sub   { font-size: .8rem; color: var(--muted); }
 
-    /* Footer */
-    footer { padding: 2rem 0; border-top: 1px solid var(--border); text-align: center; color: var(--muted); font-size: .875rem; }
-
-    /* Responsive tweaks */
-    @media (max-width: 576px) {
-      .pipe-arrow { display: none; }
-      .pipeline-flow { flex-wrap: wrap; gap: .5rem; }
-    }
+    /* ── Footer ── */
+    footer { padding: 2.5rem 0; border-top: 1px solid var(--border); text-align: center; color: var(--muted); font-size: .875rem; background: var(--surface); }
   </style>
 </head>
 <body>
 
-<!-- ── Navbar ─────────────────────────────────────────────────────────────── -->
-<nav class="navbar navbar-dark sticky-top px-4 py-2">
-  <span class="navbar-brand">MHW Risk Profiler</span>
+<!-- ── Navbar ──────────────────────────────────────────────────────────────── -->
+<nav class="navbar navbar-light sticky-top px-4 py-2 d-flex justify-content-between align-items-center">
+  <span class="navbar-brand">🌊 MHW Risk Profiler</span>
   <a class="nav-gh" href="https://github.com/avik2007/mhw-risk-profiler" target="_blank">GitHub ↗</a>
 </nav>
 
-<!-- ── Hero ──────────────────────────────────────────────────────────────── -->
+<!-- ── Hero ────────────────────────────────────────────────────────────────── -->
 <section class="hero text-center">
   <div class="container">
-    <p class="section-label">Gulf of Maine · Marine Heatwave Research</p>
+    <p class="section-label">Gulf of Maine · Marine Heatwave Risk Research</p>
     <h1>Marine Heatwave Risk Profiler</h1>
-    <p class="lead mx-auto mt-3">
-      A spatiotemporal ensemble ML pipeline that harmonizes multi-source ocean and atmospheric
-      data to quantify thermal stress risk across the Gulf of Maine.
+
+    <p class="hero-intro mx-auto">
+      Marine heatwaves are invisible climate events that push ocean temperatures far above
+      normal — threatening fish populations, salmon farms, and kelp forests that coastal
+      economies depend on. This project combines real ocean depth data, satellite observations,
+      and a 64-member AI weather ensemble to estimate <em>where</em> and <em>how severely</em>
+      thermal stress will hit across the Gulf of Maine — giving aquaculture operators and
+      climate insurers a data-driven map of financial risk.
     </p>
+
     <div class="mt-4">
-      <span class="stat-chip"><span>161</span> Ocean Cells</span>
-      <span class="stat-chip"><span>64</span> Ensemble Members</span>
-      <span class="stat-chip"><span>2</span> Atmospheric Sources</span>
-      <span class="stat-chip"><span>10</span> Depth Levels</span>
-      <span class="stat-chip"><span>2022–2023</span> Training Period</span>
+      <span class="stat-chip"><span class="val">161</span> Ocean Cells</span>
+      <span class="stat-chip"><span class="val">64</span> Ensemble Members</span>
+      <span class="stat-chip"><span class="val">2</span> Atmospheric Sources</span>
+      <span class="stat-chip"><span class="val">10</span> Depth Levels</span>
+      <span class="stat-chip"><span class="val">2022–2023</span> Training Data</span>
     </div>
     <div class="mt-3">
-      <span class="v1-badge">v1 RESULTS</span>&nbsp;
-      <span style="color:var(--muted); font-size:.8rem">Preliminary — see roadmap for v2 improvements</span>
+      <span class="v1-badge">v1 RESULTS</span>
+      <span style="color:var(--muted);font-size:.82rem;margin-left:.5rem">Preliminary — see roadmap for v2 improvements</span>
     </div>
   </div>
 </section>
 
-<!-- ── Pipeline ──────────────────────────────────────────────────────────── -->
+<!-- ── Pipeline ────────────────────────────────────────────────────────────── -->
 <section>
   <div class="container">
-    <p class="section-label">Data Pipeline</p>
-    <h2 class="section-title">From Observations to Risk</h2>
-    <p class="section-sub">Daily data harmonized to a 0.25° grid, stored in Google Cloud Storage as Zarr.</p>
+    <p class="section-label">How It Works</p>
+    <h2 class="section-title">From Ocean Observations to Financial Risk</h2>
+    <p class="section-sub">Two years of daily data — harmonized to a shared 0.25° grid, stored in Google Cloud.</p>
 
-    <div class="pipeline-flow mt-4">
-      <div class="pipe-node">
-        <div class="pipe-icon">🌊</div>
-        <div class="pipe-name">HYCOM GLBv0.08</div>
-        <div class="pipe-sub">3D ocean — temp, salinity, currents · 10 depth levels</div>
-      </div>
-      <div class="pipe-arrow">›</div>
-      <div class="pipe-node">
-        <div class="pipe-icon">🌬️</div>
-        <div class="pipe-name">ERA5 / WN2</div>
-        <div class="pipe-sub">ERA5 reanalysis · WeatherNext 2 physical ensemble</div>
-      </div>
-      <div class="pipe-arrow">›</div>
-      <div class="pipe-node">
-        <div class="pipe-icon">🗺️</div>
-        <div class="pipe-name">Harmonize</div>
-        <div class="pipe-sub">0.25° regrid · CF-1.8 · depth interpolation</div>
-      </div>
-      <div class="pipe-arrow">›</div>
-      <div class="pipe-node">
-        <div class="pipe-icon">🧠</div>
-        <div class="pipe-name">MHWRiskModel</div>
-        <div class="pipe-sub">1D-CNN + Transformer + LeakyGate</div>
-      </div>
-      <div class="pipe-arrow">›</div>
-      <div class="pipe-node" style="border-color:var(--accent);">
-        <div class="pipe-icon">📈</div>
-        <div class="pipe-name" style="color:var(--accent)">SVaR Output</div>
-        <div class="pipe-sub">Stress VaR across 64 ensemble members</div>
+    <div class="pipeline-wrap mt-4">
+      <div class="pipeline-flow">
+        <div class="pipe-node">
+          <span class="pipe-icon">🌊</span>
+          <div class="pipe-name">HYCOM Ocean</div>
+          <div class="pipe-sub">3D temperature, salinity &amp; currents at 10 depth levels</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node">
+          <span class="pipe-icon">🌬️</span>
+          <div class="pipe-name">ERA5 / WeatherNext 2</div>
+          <div class="pipe-sub">Atmospheric data — 64-member ensemble of wind, pressure &amp; temperature</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node">
+          <span class="pipe-icon">🔗</span>
+          <div class="pipe-name">Harmonize</div>
+          <div class="pipe-sub">Regrid to 0.25° · align time axes · interpolate depth</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node">
+          <span class="pipe-icon">🧠</span>
+          <div class="pipe-name">MHW Model</div>
+          <div class="pipe-sub">1D-CNN + Transformer + Attention Gate — one run per cell</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node highlight">
+          <span class="pipe-icon">📊</span>
+          <div class="pipe-name" style="color:var(--accent)">SVaR Map</div>
+          <div class="pipe-sub">95th-percentile Stress-VaR across 161 Gulf of Maine cells</div>
+        </div>
       </div>
     </div>
 
     <div class="row mt-4 g-3">
       <div class="col-md-4">
         <div class="card p-3">
-          <p class="card-title mb-1">SDD Label</p>
-          <p class="mb-0" style="font-size:.85rem;color:var(--muted)">
-            Stress Degree Days [°C·day] — cumulative SST above the Hobday MHW threshold.
-            Computed from HYCOM <code>water_temp[depth=0]</code> against a 30-year OISST v2.1 baseline.
+          <p style="font-weight:800;margin-bottom:.4rem;font-size:.95rem">What is SDD?</p>
+          <p class="mb-0" style="font-size:.88rem;color:var(--muted);line-height:1.6">
+            <strong style="color:var(--text)">Stress Degree Days</strong> measure cumulative heat above the historical average — the same concept used by coral reef scientists to predict bleaching. One SDD = one day where ocean temperature exceeds the baseline by 1°C.
           </p>
         </div>
       </div>
       <div class="col-md-4">
         <div class="card p-3">
-          <p class="card-title mb-1">Ensemble Design</p>
-          <p class="mb-0" style="font-size:.85rem;color:var(--muted)">
-            <span style="color:var(--era5)">ERA5:</span> single reanalysis expanded to 64 synthetic members via Gaussian perturbation.
-            <span style="color:var(--wn2)">WN2:</span> genuine 64-member physical ensemble from Google DeepMind's WeatherNext 2.
+          <p style="font-weight:800;margin-bottom:.4rem;font-size:.95rem">Why 64 members?</p>
+          <p class="mb-0" style="font-size:.88rem;color:var(--muted);line-height:1.6">
+            <strong style="color:var(--text)">WeatherNext 2</strong> runs the atmosphere 64 independent ways. The spread of outcomes across those 64 runs is what drives the uncertainty range in our risk estimate — higher spread means less predictable conditions.
           </p>
         </div>
       </div>
       <div class="col-md-4">
         <div class="card p-3">
-          <p class="card-title mb-1">GCS Infrastructure</p>
-          <p class="mb-0" style="font-size:.85rem;color:var(--muted)">
-            Multi-year Zarr tiles cached in GCS for fast Dask-backed training.
-            Crash-safe per-month idempotent writes with <code>.complete</code> sentinels.
+          <p style="font-weight:800;margin-bottom:.4rem;font-size:.95rem">SVaR defined</p>
+          <p class="mb-0" style="font-size:.88rem;color:var(--muted);line-height:1.6">
+            <strong style="color:var(--text)">Stress Value-at-Risk</strong> is the 95th-percentile outcome across the 64 ensemble members. In insurance terms: "at most 1-in-20 scenarios exceed this level of thermal stress."
           </p>
         </div>
       </div>
@@ -192,172 +200,150 @@
   </div>
 </section>
 
-<!-- ── Architecture ──────────────────────────────────────────────────────── -->
+<!-- ── Architecture ────────────────────────────────────────────────────────── -->
 <section>
   <div class="container">
     <p class="section-label">Model Architecture</p>
     <h2 class="section-title">1D-CNN + Transformer + LeakyGate</h2>
-    <p class="section-sub">Per-cell spatiotemporal encoder with atmosphere–ocean attention gating.</p>
+    <p class="section-sub">The model processes every ocean cell independently with two parallel information streams — one for depth, one for time — and learns to weight them.</p>
 
-    <div class="row align-items-center mt-4 g-4">
-      <div class="col-lg-6">
-        <img src="assets/figures/network_architecture.png" alt="Network architecture diagram" class="arch-img">
+    <!-- Full-width diagram first -->
+    <div class="arch-img-wrap mt-4">
+      <img src="assets/figures/network_architecture.png" alt="Network architecture — 1D-CNN depth encoder, Transformer temporal encoder, LeakyGate fusion">
+    </div>
+
+    <!-- Bullet explanations below -->
+    <div class="row mt-4 g-3">
+      <div class="col-md-6 col-lg-3">
+        <div class="arch-bullet">
+          <strong>1D-CNN Depth Encoder</strong>
+          Reads the ocean's vertical profile — temperature, salinity, and currents at 10 depth levels — and compresses it into a single "ocean state" vector per cell.
+        </div>
       </div>
-      <div class="col-lg-6">
+      <div class="col-md-6 col-lg-3">
         <div class="arch-bullet">
-          <strong>1D-CNN Depth Encoder</strong> — compresses HYCOM's 10-level depth profile into a fixed-size ocean state vector per grid cell.
+          <strong>Transformer Temporal Encoder</strong>
+          Reads the last 90 days of atmospheric data and uses self-attention to find which days and patterns matter most for predicting upcoming heatwave stress.
         </div>
+      </div>
+      <div class="col-md-6 col-lg-3">
         <div class="arch-bullet">
-          <strong>Transformer Temporal Encoder</strong> — captures 90-day seasonal context in both atmospheric and oceanic streams.
+          <strong>LeakyGate (α)</strong>
+          A learned gate that blends the ocean and atmosphere streams. α → 1.0 means the model trusts the ocean depth more; α → 0.0 means it trusts the atmosphere more. ERA5 converges to α ≈ 0.26 (atmosphere-dominant); WN2 to α ≈ 0.44 (more balanced).
         </div>
+      </div>
+      <div class="col-md-6 col-lg-3">
         <div class="arch-bullet">
-          <strong>LeakyGate (α)</strong> — learned scalar per cell blending atmospheric and oceanic representations. ERA5 converges to α ≈ 0.26; WN2 to α ≈ 0.44. The difference reflects each ensemble's ability to resolve atmosphere–ocean coupling.
-        </div>
-        <div class="arch-bullet">
-          <strong>Gaussian Spread Head</strong> — predicts mean SDD and spread across the 64-member ensemble. Spread quantifies intra-ensemble uncertainty.
-        </div>
-        <div class="arch-bullet">
-          <strong>SVaR Aggregation</strong> — sorts per-member SDD predictions to produce the 5th, 50th, and 95th percentile Stress Value-at-Risk across cells.
-        </div>
-        <div class="mt-3" style="font-size:.8rem; color:var(--muted)">
-          Loss: MSE on normalized SDD (÷ 250 °C·day) · Adam · lr=1e-4 · early stop patience=10
+          <strong>Gaussian Spread Head</strong>
+          Predicts both mean SDD and the spread across the 64 ensemble members. Spread quantifies how uncertain the forecast is — a wide spread means the 64 ensemble members disagree.
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── Training Results ──────────────────────────────────────────────────── -->
+<!-- ── Training Results ─────────────────────────────────────────────────────── -->
 <section>
   <div class="container">
     <p class="section-label">Training Results</p>
-    <h2 class="section-title">Convergence & Gate Analysis</h2>
-    <p class="section-sub">Both models trained on 2022 data, validated on 2023. Early stopping at patience = 10.</p>
+    <h2 class="section-title">Convergence &amp; Gate Analysis</h2>
+    <p class="section-sub">Trained on 2022 Gulf of Maine data, validated on 2023. Early stopping halted training when validation loss stopped improving.</p>
 
     <div class="row mt-4 g-4">
       <div class="col-lg-6">
         <div class="chart-card">
-          <div class="chart-title">Training &amp; Validation Loss</div>
-          <div id="chart-loss" class="plotly-chart" style="height:300px"></div>
+          <div class="chart-head">Training &amp; Validation Loss</div>
+          <div id="chart-loss" style="height:320px"></div>
         </div>
       </div>
       <div class="col-lg-6">
         <div class="chart-card">
-          <div class="chart-title">LeakyGate Coefficient (α)</div>
-          <div id="chart-gate" class="plotly-chart" style="height:300px"></div>
+          <div class="chart-head">LeakyGate Coefficient (α) — Which Stream Dominates?</div>
+          <div id="chart-gate" style="height:320px"></div>
         </div>
       </div>
     </div>
 
-    <!-- Stats row -->
-    <div class="row mt-4 g-3" id="stats-row"></div>
+    <div class="row mt-3 g-3" id="stats-row"></div>
   </div>
 </section>
 
-<!-- ── Risk Map ──────────────────────────────────────────────────────────── -->
+<!-- ── Risk Map ─────────────────────────────────────────────────────────────── -->
 <section>
   <div class="container">
     <p class="section-label">Risk Output</p>
     <h2 class="section-title">Stress VaR Map — Gulf of Maine</h2>
-    <p class="section-sub">SVaR<sub>95</sub> [°C·day] — 95th-percentile SDD across the ensemble. Higher = greater thermal stress.</p>
+    <p class="section-sub">
+      SVaR<sub>95</sub> [°C·day] — 95th-percentile cumulative thermal stress across ensemble members.
+      Higher values = greater heatwave risk for marine assets.
+    </p>
 
     <div class="caveat mt-3">
-      <strong>v1 note:</strong> Full spatial SVaR inference requires GCS data access (HYCOM + ERA5/WN2 Zarr tiles).
-      Shown: 5 sampled cells from partial inference. Gray dots = full 17×21 GoM grid (357 cells).
-      v2 will show all 161 ocean cells.
+      <strong>⚠️ Illustrative map:</strong> Inputs are synthetically generated with latitude/longitude-dependent structure to show spatial response. Real-data inference requires the full GCS data pipeline (v2). The model architecture and trained weights are real.
     </div>
 
-    <div class="map-toggle">
-      <button id="btn-era5" class="active" onclick="showMap('era5')">ERA5</button>
-      <button id="btn-wn2" onclick="showMap('wn2')">WeatherNext 2</button>
+    <div class="map-toggle mt-3">
+      <button id="btn-era5" class="active-era5" onclick="showMap('era5')">ERA5 Model</button>
+      <button id="btn-wn2"  onclick="showMap('wn2')">WeatherNext 2 Model</button>
     </div>
 
     <div class="chart-card p-2">
-      <div id="chart-map" style="height:480px"></div>
+      <div id="chart-map" style="height:500px"></div>
     </div>
   </div>
 </section>
 
-<!-- ── Roadmap ───────────────────────────────────────────────────────────── -->
+<!-- ── Roadmap ──────────────────────────────────────────────────────────────── -->
 <section>
   <div class="container">
-    <p class="section-label">Roadmap</p>
+    <p class="section-label">What's Next</p>
     <h2 class="section-title">v1 → v2 Improvements</h2>
-    <p class="section-sub">v1 establishes the pipeline and architecture. v2 addresses the core scientific limitations.</p>
+    <p class="section-sub">v1 establishes the full pipeline. v2 addresses the core scientific limitations to produce publication-ready results.</p>
 
     <div class="row mt-4 g-3">
       <div class="col-md-6">
         <div class="roadmap-card">
-          <div class="d-flex align-items-center gap-2 mb-3">
-            <span class="v1-badge">v1 — Current</span>
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--warn)"></span>
-            2-year OISST baseline (requires ≥30yr for Hobday 2016 threshold)
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--warn)"></span>
-            HYCOM labels deterministic across all 64 members — spread underestimated
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--warn)"></span>
-            Partial SVaR inference (5 of 161 cells) — full run requires GCS
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--warn)"></span>
-            Model trained on 2 years; limited temporal generalization
-          </div>
+          <h3><span class="v1-badge me-2">v1 — Current</span> What exists now</h3>
+          <div class="road-item"><span class="road-dot" style="background:var(--warn)"></span>2-year baseline for MHW threshold (Hobday 2016 requires ≥30 years)</div>
+          <div class="road-item"><span class="road-dot" style="background:var(--warn)"></span>Ocean labels are deterministic across all 64 members — ensemble spread underestimated</div>
+          <div class="road-item"><span class="road-dot" style="background:var(--warn)"></span>Full real-data SVaR inference requires active GCS data access</div>
+          <div class="road-item"><span class="road-dot" style="background:var(--warn)"></span>Model trained on 2 years of data; limited temporal generalization</div>
         </div>
       </div>
       <div class="col-md-6">
         <div class="roadmap-card">
-          <div class="d-flex align-items-center gap-2 mb-3">
-            <span class="v2-badge">v2 — In Progress</span>
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--wn2)"></span>
-            30-year OISST v2.1 climatology (1982–2011) for calibrated MHW thresholds
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--wn2)"></span>
-            GLORYS12V1 ocean reanalysis + AR(1) perturbation → stochastic labels
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--wn2)"></span>
-            Full spatial SVaR inference across all 161 ocean cells
-          </div>
-          <div class="roadmap-item">
-            <span class="dot" style="background:var(--wn2)"></span>
-            Extended to 2022–2025 using GLORYS12V1 coverage
-          </div>
+          <h3><span class="v2-badge me-2">v2 — In Progress</span> What's coming</h3>
+          <div class="road-item"><span class="road-dot" style="background:#059669"></span>30-year OISST v2.1 climatology (1982–2011) for scientifically valid MHW thresholds</div>
+          <div class="road-item"><span class="road-dot" style="background:#059669"></span>GLORYS12V1 ocean reanalysis + stochastic perturbation → real ensemble spread in labels</div>
+          <div class="road-item"><span class="road-dot" style="background:#059669"></span>Full observationally-driven SVaR inference across all 161 Gulf of Maine cells</div>
+          <div class="road-item"><span class="road-dot" style="background:#059669"></span>Extended to 2022–2025 coverage for improved model generalization</div>
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── Footer ────────────────────────────────────────────────────────────── -->
+<!-- ── Footer ───────────────────────────────────────────────────────────────── -->
 <footer>
   <div class="container">
-    <p class="mb-1">MHW Risk Profiler · Gulf of Maine · Built with HYCOM, OISST, ERA5, WeatherNext 2</p>
-    <p class="mb-0" style="font-size:.8rem">
-      <a href="https://github.com/avik2007/mhw-risk-profiler" target="_blank">GitHub</a> ·
-      Data: HYCOM (NCEI), OISST v2.1 (NCEI), ERA5 (ECMWF/GEE), WeatherNext 2 (Google DeepMind)
+    <p class="mb-1" style="font-weight:700;color:var(--text)">MHW Risk Profiler — Gulf of Maine</p>
+    <p class="mb-1">Data: HYCOM (NCEI) · OISST v2.1 (NCEI) · ERA5 (ECMWF/GEE) · WeatherNext 2 (Google DeepMind)</p>
+    <p class="mb-0">
+      <a href="https://github.com/avik2007/mhw-risk-profiler" target="_blank">GitHub ↗</a>
     </p>
   </div>
 </footer>
 
 
 <script>
-// ── Load data ──────────────────────────────────────────────────────────────
-const PLOTLY_DARK = {
-  plot_bgcolor:  'rgba(0,0,0,0)',
-  paper_bgcolor: 'rgba(0,0,0,0)',
-  font: { color: '#94a3b8', family: 'Inter, system-ui, sans-serif', size: 12 },
-  xaxis: { gridcolor: '#334155', linecolor: '#334155', tickcolor: '#475569' },
-  yaxis: { gridcolor: '#334155', linecolor: '#334155', tickcolor: '#475569' },
-  legend: { bgcolor: 'rgba(0,0,0,0)', bordercolor: '#334155' },
-  margin: { l: 50, r: 20, t: 20, b: 40 },
+const LAYOUT_BASE = {
+  plot_bgcolor:  '#ffffff',
+  paper_bgcolor: '#ffffff',
+  font: { color: '#5a6e8c', family: 'Inter, system-ui, sans-serif', size: 12 },
+  xaxis: { gridcolor: '#e8eff8', linecolor: '#dde4f0', tickcolor: '#c0cfe4', zeroline: false },
+  yaxis: { gridcolor: '#e8eff8', linecolor: '#dde4f0', tickcolor: '#c0cfe4', zeroline: false },
+  legend: { bgcolor: 'rgba(255,255,255,.9)', bordercolor: '#dde4f0', borderwidth: 1 },
+  margin: { l: 55, r: 20, t: 15, b: 45 },
 };
 
 Promise.all([
@@ -365,202 +351,181 @@ Promise.all([
   fetch('data/svar_map.json').then(r => r.json()),
   fetch('data/metadata.json').then(r => r.json()),
 ]).then(([training, svarMap, meta]) => {
-
-  renderLossChart(training);
-  renderGateChart(training);
-  renderStatsRow(training, meta);
+  renderLoss(training);
+  renderGate(training);
+  renderStats(training);
   renderMap(svarMap, 'era5');
   window._svarMap = svarMap;
+}).catch(e => console.error('Data load error:', e));
 
-}).catch(err => console.error('Data load failed:', err));
 
-
-// ── Loss chart ─────────────────────────────────────────────────────────────
-function renderLossChart(d) {
+// ── Loss chart ──────────────────────────────────────────────────────────────
+function renderLoss(d) {
   const e = d.era5, w = d.wn2;
   const traces = [
-    { x: e.epochs, y: e.train_loss, name: 'ERA5 train',  mode: 'lines', line: { color: '#3b82f6', width: 2 } },
-    { x: e.epochs, y: e.val_loss,   name: 'ERA5 val',    mode: 'lines', line: { color: '#3b82f6', width: 2, dash: 'dot' } },
-    { x: w.epochs, y: w.train_loss, name: 'WN2 train',   mode: 'lines', line: { color: '#10b981', width: 2 } },
-    { x: w.epochs, y: w.val_loss,   name: 'WN2 val',     mode: 'lines', line: { color: '#10b981', width: 2, dash: 'dot' } },
+    { x: e.epochs, y: e.train_loss, name: 'ERA5 train', mode: 'lines', line: { color: '#1d6fe8', width: 2.5 } },
+    { x: e.epochs, y: e.val_loss,   name: 'ERA5 val',   mode: 'lines', line: { color: '#1d6fe8', width: 2.5, dash: 'dot' } },
+    { x: w.epochs, y: w.train_loss, name: 'WN2 train',  mode: 'lines', line: { color: '#0ea472', width: 2.5 } },
+    { x: w.epochs, y: w.val_loss,   name: 'WN2 val',    mode: 'lines', line: { color: '#0ea472', width: 2.5, dash: 'dot' } },
+    { x: [e.best_epoch], y: [e.best_val_loss], mode: 'markers', showlegend: false,
+      marker: { color: '#1d6fe8', size: 10, symbol: 'star', line: { color: '#fff', width: 1 } } },
+    { x: [w.best_epoch], y: [w.best_val_loss], mode: 'markers', showlegend: false,
+      marker: { color: '#0ea472', size: 10, symbol: 'star', line: { color: '#fff', width: 1 } } },
   ];
-  // Mark best epochs
-  traces.push({
-    x: [e.best_epoch], y: [e.best_val_loss],
-    mode: 'markers', name: 'ERA5 best',
-    marker: { color: '#3b82f6', size: 9, symbol: 'star' }, showlegend: false,
-  });
-  traces.push({
-    x: [w.best_epoch], y: [w.best_val_loss],
-    mode: 'markers', name: 'WN2 best',
-    marker: { color: '#10b981', size: 9, symbol: 'star' }, showlegend: false,
-  });
-
-  const layout = {
-    ...PLOTLY_DARK,
-    xaxis: { ...PLOTLY_DARK.xaxis, title: 'Epoch' },
-    yaxis: { ...PLOTLY_DARK.yaxis, title: 'MSE Loss (normalized)' },
-    legend: { ...PLOTLY_DARK.legend, orientation: 'h', y: -0.25 },
+  const layout = { ...LAYOUT_BASE,
+    xaxis: { ...LAYOUT_BASE.xaxis, title: { text: 'Epoch', standoff: 8 } },
+    yaxis: { ...LAYOUT_BASE.yaxis, title: { text: 'MSE Loss (normalised)', standoff: 8 } },
+    legend: { ...LAYOUT_BASE.legend, orientation: 'h', y: -0.22, x: 0 },
   };
   Plotly.newPlot('chart-loss', traces, layout, { responsive: true, displayModeBar: false });
 }
 
 
-// ── Gate chart ─────────────────────────────────────────────────────────────
-function renderGateChart(d) {
+// ── Gate chart ──────────────────────────────────────────────────────────────
+function renderGate(d) {
   const e = d.era5, w = d.wn2;
   const traces = [
-    {
-      x: e.epochs, y: e.gate_mean, name: 'ERA5',
-      mode: 'lines+markers', line: { color: '#3b82f6', width: 2 },
-      marker: { size: 5 },
-    },
-    {
-      x: w.epochs, y: w.gate_mean, name: 'WN2',
-      mode: 'lines+markers', line: { color: '#10b981', width: 2 },
-      marker: { size: 5 },
-    },
+    { x: e.epochs, y: e.gate_mean, name: 'ERA5  (synthetic ensemble)', mode: 'lines+markers',
+      line: { color: '#1d6fe8', width: 2.5 }, marker: { size: 6, color: '#1d6fe8' } },
+    { x: w.epochs, y: w.gate_mean, name: 'WeatherNext 2 (physical ensemble)', mode: 'lines+markers',
+      line: { color: '#0ea472', width: 2.5 }, marker: { size: 6, color: '#0ea472' } },
   ];
-  const layout = {
-    ...PLOTLY_DARK,
-    xaxis: { ...PLOTLY_DARK.xaxis, title: 'Epoch' },
-    yaxis: { ...PLOTLY_DARK.yaxis, title: 'α (gate coefficient)', range: [0, 0.6] },
-    legend: { ...PLOTLY_DARK.legend, orientation: 'h', y: -0.25 },
+  const layout = { ...LAYOUT_BASE,
+    xaxis: { ...LAYOUT_BASE.xaxis, title: { text: 'Epoch', standoff: 8 } },
+    yaxis: { ...LAYOUT_BASE.yaxis, title: { text: 'α  (0 = atmosphere · 1 = ocean)', standoff: 8 }, range: [0, 0.65] },
+    legend: { ...LAYOUT_BASE.legend, orientation: 'h', y: -0.22, x: 0 },
     shapes: [
       { type: 'line', x0: 0, x1: 1, xref: 'paper', y0: 0.5, y1: 0.5,
-        line: { color: '#475569', width: 1, dash: 'dot' } },
+        line: { color: '#c0cfe4', width: 1.5, dash: 'dot' } },
     ],
     annotations: [
-      { x: 0.97, y: 0.52, xref: 'paper', yref: 'y', text: 'α = 0.5',
-        showarrow: false, font: { color: '#475569', size: 10 } },
+      { x: 0.97, y: 0.53, xref: 'paper', yref: 'y',
+        text: '← balanced →', showarrow: false, font: { color: '#c0cfe4', size: 10 } },
     ],
   };
   Plotly.newPlot('chart-gate', traces, layout, { responsive: true, displayModeBar: false });
 }
 
 
-// ── Stats row ──────────────────────────────────────────────────────────────
-function renderStatsRow(training, meta) {
-  const e = training.era5, w = training.wn2;
-  const stats = [
-    { label: 'ERA5 — Best Val Loss',  value: e.best_val_loss.toFixed(4), sub: `Epoch ${e.best_epoch} of ${e.n_epochs}`, color: '#3b82f6' },
-    { label: 'WN2 — Best Val Loss',   value: w.best_val_loss.toFixed(4), sub: `Epoch ${w.best_epoch} of ${w.n_epochs}`, color: '#10b981' },
-    { label: 'ERA5 — Final Gate (α)', value: e.final_gate.toFixed(3),    sub: 'Stabilized after ep 3',  color: '#3b82f6' },
-    { label: 'WN2 — Final Gate (α)',  value: w.final_gate.toFixed(3),    sub: 'Stabilized after ep 6',  color: '#10b981' },
+// ── Stats ───────────────────────────────────────────────────────────────────
+function renderStats(d) {
+  const e = d.era5, w = d.wn2;
+  const items = [
+    { color: '#1d6fe8', label: 'ERA5 — Best Val Loss',   val: e.best_val_loss.toFixed(4), sub: `Epoch ${e.best_epoch} · early stop at ep ${e.n_epochs}` },
+    { color: '#0ea472', label: 'WN2 — Best Val Loss',    val: w.best_val_loss.toFixed(4), sub: `Epoch ${w.best_epoch} · early stop at ep ${w.n_epochs}` },
+    { color: '#1d6fe8', label: 'ERA5 — Final Gate (α)',  val: e.final_gate.toFixed(3),   sub: 'Atmosphere-dominant stream' },
+    { color: '#0ea472', label: 'WN2 — Final Gate (α)',   val: w.final_gate.toFixed(3),   sub: 'More balanced — ocean contribution higher' },
   ];
-  const container = document.getElementById('stats-row');
-  stats.forEach(s => {
-    container.innerHTML += `
-      <div class="col-sm-6 col-lg-3">
-        <div class="card p-3 h-100">
-          <div style="font-size:.75rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${s.color}">${s.label}</div>
-          <div style="font-size:2rem;font-weight:800;color:var(--text);line-height:1.2;margin:.25rem 0">${s.value}</div>
-          <div style="font-size:.75rem;color:var(--muted)">${s.sub}</div>
-        </div>
-      </div>`;
+  const el = document.getElementById('stats-row');
+  items.forEach(s => {
+    el.innerHTML += `
+    <div class="col-sm-6 col-lg-3">
+      <div class="stat-card">
+        <div class="stat-label" style="color:${s.color}">${s.label}</div>
+        <div class="stat-val"   style="color:${s.color}">${s.val}</div>
+        <div class="stat-sub">${s.sub}</div>
+      </div>
+    </div>`;
   });
 }
 
 
-// ── Map ────────────────────────────────────────────────────────────────────
+// ── Map ─────────────────────────────────────────────────────────────────────
 function renderMap(svarMap, source) {
-  const grid    = svarMap.grid_points;
   const cells   = svarMap[source];
-  const validLats = cells.map(c => c.lat);
-  const validLons = cells.map(c => c.lon);
-  const vals      = cells.map(c => c.svar95);
-  const tips      = cells.map(c =>
-    `Lat ${c.lat}°N, Lon ${c.lon}°E<br>SVaR₉₅: ${c.svar95.toFixed(1)} °C·day`
-  );
+  const vals    = cells.map(c => c.svar95);
+  const vmin    = Math.min(...vals);
+  const vmax    = Math.max(...vals);
 
-  const traces = [
-    // background grid
-    {
-      type: 'scattergeo',
-      lon: grid.map(p => p.lon),
-      lat: grid.map(p => p.lat),
-      mode: 'markers',
-      marker: { size: 5, color: '#334155', symbol: 'square' },
-      hoverinfo: 'none',
-      name: 'GoM grid (357 cells)',
-      showlegend: true,
-    },
-    // valid SVaR cells
-    {
-      type: 'scattergeo',
-      lon: validLons,
-      lat: validLats,
-      mode: 'markers',
-      marker: {
-        size: 14,
-        color: vals,
-        colorscale: [
-          [0,   '#1e40af'],
-          [0.3, '#3b82f6'],
-          [0.6, '#f59e0b'],
-          [1,   '#dc2626'],
-        ],
-        colorbar: {
-          title: { text: 'SVaR₉₅<br>[°C·day]', font: { color: '#94a3b8', size: 11 } },
-          tickfont: { color: '#94a3b8' },
-          bgcolor: 'rgba(0,0,0,0)',
-          bordercolor: '#334155',
-          len: 0.7,
-        },
-        symbol: 'square',
-        line: { color: '#fff', width: 1.5 },
-        cmin: Math.min(...vals) - 5,
-        cmax: Math.max(...vals) + 5,
+  // Build flat arrays for all cells
+  const lats = [], lons = [], colors = [], texts = [];
+  cells.forEach(c => {
+    lats.push(c.lat);
+    lons.push(c.lon);
+    colors.push(c.svar95);
+    texts.push(
+      `<b>${source.toUpperCase()} Model</b><br>` +
+      `Lat ${c.lat.toFixed(2)}°N · Lon ${c.lon.toFixed(2)}°E<br>` +
+      `SVaR₉₅: <b>${c.svar95.toFixed(1)} °C·day</b><br>` +
+      `SVaR₅₀: ${c.svar50.toFixed(1)} °C·day<br>` +
+      `Spread: ${c.spread.toFixed(3)}`
+    );
+  });
+
+  const activeColor = source === 'era5' ? '#1d6fe8' : '#0ea472';
+
+  const trace = {
+    type: 'scattergeo',
+    lon: lons,
+    lat: lats,
+    mode: 'markers',
+    marker: {
+      size: 14,
+      color: colors,
+      colorscale: [
+        [0.0, '#dbeafe'],
+        [0.3, '#60a5fa'],
+        [0.6, '#f59e0b'],
+        [0.85,'#ef4444'],
+        [1.0, '#7f1d1d'],
+      ],
+      colorbar: {
+        title: { text: 'SVaR₉₅<br>[°C·day]', font: { color: '#5a6e8c', size: 12 } },
+        tickfont: { color: '#5a6e8c' },
+        bgcolor: 'rgba(255,255,255,.85)',
+        bordercolor: '#dde4f0',
+        len: 0.75,
       },
-      text: tips,
-      hovertemplate: '%{text}<extra></extra>',
-      name: `${source.toUpperCase()} SVaR cells (v1)`,
-      showlegend: true,
+      cmin: vmin - (vmax - vmin) * 0.1,
+      cmax: vmax + (vmax - vmin) * 0.1,
+      symbol: 'square',
+      line: { color: '#fff', width: 1 },
+      opacity: 0.92,
     },
-  ];
+    text: texts,
+    hovertemplate: '%{text}<extra></extra>',
+    name: `${source === 'era5' ? 'ERA5' : 'WeatherNext 2'} SVaR`,
+  };
 
   const label = source === 'era5'
-    ? 'ERA5 (reanalysis + synthetic ensemble)'
-    : 'WeatherNext 2 (64-member physical ensemble)';
+    ? 'ERA5 Model — reanalysis + synthetic ensemble'
+    : 'WeatherNext 2 Model — 64-member physical ensemble';
 
   const layout = {
-    ...PLOTLY_DARK,
-    margin: { l: 0, r: 0, t: 30, b: 0 },
+    plot_bgcolor:  '#ffffff',
+    paper_bgcolor: '#ffffff',
+    margin: { l: 0, r: 0, t: 40, b: 0 },
     annotations: [{
-      text: label,
-      x: 0.5, y: 1.02, xref: 'paper', yref: 'paper',
-      showarrow: false,
-      font: { color: '#94a3b8', size: 12 },
+      text: `<b>${label}</b> · Illustrative (synthetic inputs, real model weights)`,
+      x: 0.5, y: 1.03, xref: 'paper', yref: 'paper', showarrow: false,
+      font: { color: '#5a6e8c', size: 12 },
     }],
     geo: {
       scope: 'north america',
       projection: { type: 'mercator' },
-      center: { lat: 43, lon: -68.5 },
+      center: { lat: 43.0, lon: -68.5 },
       lonaxis: { range: [-73, -64] },
       lataxis: { range: [39.5, 46.5] },
-      showland: true, landcolor: '#1e2b3a',
-      showocean: true, oceancolor: '#0a1929',
-      showcoastlines: true, coastlinecolor: '#475569',
-      showstates: true, statecolor: '#334155',
+      showland: true,    landcolor: '#e8f4ea',
+      showocean: true,   oceancolor: '#dbeafe',
+      showcoastlines: true, coastlinecolor: '#94a3b8',
+      showstates: true,  statecolor: '#c0cfe4',
+      showrivers: false,
       showframe: false,
-      bgcolor: 'rgba(0,0,0,0)',
+      bgcolor: '#ffffff',
+      resolution: 50,
     },
-    legend: {
-      ...PLOTLY_DARK.legend,
-      x: 0.02, y: 0.02,
-      font: { color: '#94a3b8', size: 11 },
-    },
+    legend: { bgcolor: 'rgba(255,255,255,.9)', bordercolor: '#dde4f0', borderwidth: 1,
+              x: 0.02, y: 0.04, font: { color: '#5a6e8c', size: 11 } },
   };
 
-  Plotly.react('chart-map', traces, layout, { responsive: true, displayModeBar: false });
+  Plotly.react('chart-map', [trace], layout, { responsive: true, displayModeBar: false });
 }
 
-
-// ── Map toggle ─────────────────────────────────────────────────────────────
-function showMap(source) {
-  document.getElementById('btn-era5').classList.toggle('active', source === 'era5');
-  document.getElementById('btn-wn2').classList.toggle('active',  source === 'wn2');
-  renderMap(window._svarMap, source);
+function showMap(src) {
+  document.getElementById('btn-era5').className = src === 'era5' ? 'active-era5' : '';
+  document.getElementById('btn-wn2').className  = src === 'wn2'  ? 'active-wn2'  : '';
+  renderMap(window._svarMap, src);
 }
 </script>
 

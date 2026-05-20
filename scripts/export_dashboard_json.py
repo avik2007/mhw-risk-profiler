@@ -113,8 +113,8 @@ def make_grid_points(zarr_path):
             for la in lat for lo in lon]
 
 
-era5_zarr = os.path.join(BASE, "data/results_era5/results/era5_svar.zarr")
-wn2_zarr  = os.path.join(BASE, "data/results_wn2/results/wn2_svar.zarr")
+era5_zarr = os.path.join(BASE, "data/results_dashboard/era5_svar_dashboard.zarr")
+wn2_zarr  = os.path.join(BASE, "data/results_dashboard/wn2_svar_dashboard.zarr")
 
 svar_map = {
     "domain": {"lat_min": 41.0, "lat_max": 45.0, "lon_min": -71.0, "lon_max": -66.0},
@@ -123,7 +123,7 @@ svar_map = {
     "wn2":  load_svar_cells(wn2_zarr),
     "units": "deg_C_day",
     "label_norm": 250.0,
-    "note": "v1 SVaR from partial inference (5 cells). Full spatial inference requires GCS data access.",
+    "note": "Illustrative SVaR — real model weights, spatially-structured synthetic inputs across full 17×21 GoM grid.",
 }
 
 path = os.path.join(OUT, "svar_map.json")
