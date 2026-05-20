@@ -4,6 +4,9 @@
 
 # Large datasets and raw model output — never commit
 data/
+# Allow pre-computed dashboard JSON (not raw data)
+!docs/data/
+!docs/data/**
 
 # Keep research notes local to maintain a clean production engine
 mhw_ai_research/

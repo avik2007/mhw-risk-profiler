@@ -1,0 +1,78 @@
+{
+  "model": {
+    "name": "MHWRiskModel",
+    "architecture": "1D-CNN depth encoder + Transformer temporal encoder + LeakyGate",
+    "n_members": 64,
+    "seq_len": 90,
+    "domain_bbox": [
+      -71.0,
+      41.0,
+      -66.0,
+      45.0
+    ],
+    "train_period": [
+      "2022-01-01",
+      "2022-12-31"
+    ],
+    "val_period": [
+      "2023-01-01",
+      "2023-12-31"
+    ],
+    "label_norm": 250.0,
+    "n_ocean_cells": 161,
+    "depth_levels": 10
+  },
+  "data_sources": [
+    {
+      "name": "HYCOM GLBv0.08",
+      "role": "3D ocean (temperature, salinity, currents)",
+      "resolution": "0.08\u00b0",
+      "depth_levels": 10,
+      "years": "2022\u20132023"
+    },
+    {
+      "name": "NCEI OISST v2.1",
+      "role": "SST baseline for MHW threshold",
+      "resolution": "0.25\u00b0",
+      "years": "1982\u20132011 climatology"
+    },
+    {
+      "name": "ECMWF ERA5",
+      "role": "Atmospheric reanalysis (5 vars)",
+      "resolution": "0.25\u00b0",
+      "ensemble": "64 synthetic members via Gaussian expansion"
+    },
+    {
+      "name": "Google WeatherNext 2",
+      "role": "Probabilistic atmospheric forecast (4 vars)",
+      "resolution": "0.25\u00b0",
+      "ensemble": "64 physical ensemble members"
+    }
+  ],
+  "v1_limitations": [
+    "2-year OISST baseline \u2014 Hobday (2016) requires \u226530 years; v2 uses 1982\u20132011",
+    "HYCOM labels deterministic across all 64 members \u2192 spread underestimated",
+    "Partial SVaR inference (5 of 161 cells) \u2014 full run requires GCS data",
+    "Model converges to near-mean prediction; XAI attribution in v2 with stochastic labels"
+  ],
+  "v2_roadmap": [
+    "30-year OISST climatology baseline (1982\u20132011)",
+    "GLORYS12V1 ocean reanalysis + AR(1) perturbation for stochastic labels",
+    "Full spatial SVaR inference across 161+ GoM ocean cells",
+    "Extended training to 2022\u20132025 using GLORYS12V1 coverage"
+  ],
+  "results_summary": {
+    "era5": {
+      "best_epoch": 5,
+      "best_val_loss": 0.100373,
+      "final_gate": 0.2598,
+      "early_stop_epoch": 15
+    },
+    "wn2": {
+      "best_epoch": 11,
+      "best_val_loss": 0.077224,
+      "final_gate": 0.441,
+      "early_stop_epoch": 21
+    }
+  }
+}

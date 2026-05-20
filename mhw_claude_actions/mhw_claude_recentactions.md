@@ -4,6 +4,46 @@
 
 ---
 
+## [2026-05-19] Session 33 — Strategic pivot to GitHub Pages dashboard; dashboard v1 built and committed
+
+### What happened
+- **Strategic rethink:** Decided project needs a deployable portfolio piece fast (24-50h). Chose Option B (engineering-focused static dashboard) over continuing to chase full probabilistic VaR claims (which require GLORYS12V1 + 30yr OISST + stochastic labels = weeks).
+- **Data audit:** Both VMs TERMINATED. Confirmed local artifacts: ERA5 Option B training log (15 epochs), WN2 training log (21 epochs), both SVaR zarrs (5 valid cells each — partial inference), model weights (data/models/). xai_comparison.json exists but inconsistent with Option B gate values — not used in dashboard.
+- **Dashboard built:** `docs/index.html` — full static GitHub Pages dashboard. Sections: hero + stats, data pipeline, model architecture, training results (Plotly loss + gate charts), risk map (GoM Scattergeo with 5 real SVaR cells + 357-cell grid overlay), v1→v2 roadmap.
+- **Export script:** `scripts/export_dashboard_json.py` reads training CSVs + SVaR zarrs → `docs/data/training.json`, `docs/data/svar_map.json`, `docs/data/metadata.json`.
+- **gitignore update:** Added `!docs/data/` and `!docs/data/**` to unignore pre-computed dashboard JSON from the `data/` rule.
+
+### Key decisions
+- Lead with engineering story (pipeline + architecture + gate analysis), NOT scientific claims. v1 badge + roadmap are explicit about limitations.
+- Gate divergence (ERA5 α≈0.26 vs WN2 α≈0.44) is the headline training finding — same architecture, different ensemble → different learned weighting.
+- XAI attribution section dropped: gate values in xai_comparison.json don't match Option B training log values (possible model version mismatch). Will re-run in v2 with stochastic labels.
+- SVaR map shows 5 real cells + full 357-cell GoM grid context. Honest v1 caveat displayed.
+
+### Next
+- Enable GitHub Pages: repo Settings → Pages → Source: Deploy from branch → main, /docs folder.
+- Verify live URL: `https://avik2007.github.io/mhw-risk-profiler/`
+- Optional: copy Option B result PNGs to docs/assets/ for static fallback.
+- v2 priorities: GLORYS12V1 + 30yr OISST climatology + full spatial SVaR inference.
+
+---
+
+## [2026-05-02] Session 32 — compare_xai WN2 SST mask fix; README cleanup; diagnose_labels.py added; GLORYS12V1 goal added
+
+### What happened
+- **compare_xai WN2 SST valid mask (commit d853f91):** `get_season_tensors` was not applying the `wn2_sst_valid` mask introduced in `build_tensors` (commit 88a5fe2). Coastal WN2 cells with undefined SST would produce NaN IG gradients in Integrated Gradients attribution, corrupting the XAI comparison. Fixed: mask built from `merged["sea_surface_temperature"].isel(member=0, time=0).isnull()` now applied in `get_season_tensors` to exclude those cells before tensor slicing.
+- **README cleanup (commit 5d195b0):** Removed Research Inputs section (7 lines). No code impact.
+- **Session tracking + scripts (commit 39f3368):** Added `scripts/diagnose_labels.py` (82-line diagnostic utility for auditing SDD label distributions). Added 3 plan docs under `docs/superpowers/plans/`. Updated Gemini tracking files. Added GLORYS12V1 strategic goal to todo.
+
+### Key decisions
+- WN2 SST mask must be applied consistently in ALL inference paths (build_tensors ✅, compare_xai ✅). Any future script consuming WN2 tensors must also apply this mask.
+
+### Next
+- Pull ERA5 results from mhw-training VM (still pending as of session 31).
+- Run compare_xai.py on both ERA5 + WN2 results; validate Zonal Wind Story.
+- Draft LinkedIn copy with user; stop VMs to halt costs.
+
+---
+
 ## [2026-05-01] Session 31 — WN2 SST NaN root cause found + fixed; WN2 training complete; results reviewed; gate collapse diagnosed
 
 ### What happened

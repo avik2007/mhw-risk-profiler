@@ -5,7 +5,39 @@
 
 ---
 
-## ACTIVE — Option B parallel retrain on 2 VMs (relaunched 2026-04-30 after NaN fix)
+## ACTIVE — GitHub Pages Dashboard (~24h, Option B)
+
+**Goal:** Static github.io portfolio page. Engineering story, not science claims. XAI as "methodology demo, v2 coming."
+**Stack:** `docs/index.html` + Plotly.js CDN + `docs/data/*.json`. Zero build step. GitHub Pages from `/docs` on `main`.
+**Framing:** Pipeline + architecture + attention analysis = credible portfolio piece. No VaR/spread claims (spread=0 makes them hollow).
+
+### Dashboard sections
+1. Hero — title, tagline, GitHub link
+2. Data Pipeline — HYCOM + ERA5/WN2 → harmonize → GCS → model (diagram)
+3. Architecture — 1D-CNN + Transformer + LeakyGate (existing network diagram)
+4. Attention Analysis — GoM choropleth, gate weight per cell, ERA5 vs WN2 toggle
+5. Training Results — loss curves ERA5 vs WN2, gate histogram
+6. Roadmap — v1 limitations → v2 (GLORYS12V1 stochastic labels, 30yr OISST)
+
+### Build steps
+- [ ] **Step 0** — Pull ERA5 results from `mhw-training` VM; check if compare_xai finished; stop both VMs
+  - Pull cmd: `gcloud compute scp --recurse mhw-training:~/mhw-risk-profiler/data/results/ data/results_era5/ --zone=us-central1-c`
+  - Check XAI: `gcloud compute ssh mhw-training --zone=us-central1-c -- "ls -lh ~/mhw-risk-profiler/data/results/xai/ 2>/dev/null || echo MISSING"`
+  - Stop VMs: `gcloud compute instances stop mhw-training mhw-training-wn2 --zone=us-central1-c`
+- [ ] **Step 1** — `scripts/export_dashboard_json.py`: reads training CSVs + model weights → gate-per-cell JSON + loss JSON + cell lat/lon GeoJSON
+- [ ] **Step 2** — `docs/index.html`: Plotly choropleth map + line charts + architecture diagram embed
+- [ ] **Step 3** — Polish framing copy, "v1" badges on results, roadmap section
+- [ ] **Step 4** — Enable GitHub Pages from `/docs` on `main`, verify live URL
+
+### Prerequisites (from session 32 / recent actions)
+- `mhw-training` VM likely still running — has ERA5 results (NOT pulled locally) + compare_xai output (launched 2026-05-02, may have finished)
+- WN2 results confirmed local: `data/results_wn2/results/` (5 PNGs + wn2_training_log.csv)
+- ERA5 model weights: on VM only. WN2 weights: likely in `data/results_wn2/` or `data/models/`
+- compare_xai: if finished, output in `~/mhw-risk-profiler/data/results/xai/` on VM
+
+---
+
+## DONE — Option B parallel retrain on 2 VMs (relaunched 2026-04-30 after NaN fix)
 
 **LinkedIn deadline: 2026-05-01**
 
@@ -41,7 +73,8 @@ Python stdout redirected to log file = block-buffered. Epoch lines don't appear 
 - Fix options: (A) quantile loss — cheap partial improvement; (B) P5 OISST 30yr retraining — correct fix.
 
 ### After ERA5 results pulled
-- [ ] Run final XAI: `MHW_GCS_BUCKET=gs://mhw-risk-cache GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/compare_xai.py --use-gcs --n-steps 50`
+- [ ] **RUNNING (2026-05-02)** Run final XAI: `MHW_GCS_BUCKET=gs://mhw-risk-cache GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcp-keys/mhw-harvester.json /home/avik2007/miniconda3/envs/mhw-risk/bin/python scripts/compare_xai.py --use-gcs --n-steps 50`
+  - ✅ compare_xai WN2 SST valid mask fix applied (commit d853f91, session 32) — NaN IG at coastal cells resolved
 - [ ] Validate "Zonal Wind Story" (WN2 → U-wind > V-wind, ERA5 → blunted by σ=0.3 noise)
 - [ ] Stop mhw-training-wn2 (and possibly mhw-training) to halt VM costs — after LinkedIn validated
 - [ ] Draft LinkedIn copy — review with user before publishing
@@ -306,3 +339,31 @@ Workaround: upgraded to `n1-highmem-8` (52GB). Proper fix: refactor `load_real_d
 in `train_era5.py` (and `train_wn2.py`) to load lazily, process in spatial/temporal chunks,
 and avoid full materialization before tensor conversion.
 Prerequisite: baseline training validated end-to-end first.
+
+### [P10] Quantile-type handling — revisit (raised 2026-05-14)
+Endpoint is a 95th-percentile statistic (SVaR_95) computed over a 90th-percentile-defined
+event (Hobday threshold). Currently every quantile is left at library default. Three
+distinct places to revisit, in order of expected impact:
+
+1. **Distribution alignment (highest impact, currently missing).** WN2 ensemble SST and
+   OISST baseline have different bias structures. Comparing WN2 forecast SST to an
+   OISST-derived 90th-pct threshold without quantile mapping (QM) can systematically
+   over/under-count MHW days. Standard fix: empirical QM per (doy, cell) before
+   threshold compare. Prerequisite: P5 (30-yr OISST climatology) done first so QM target
+   is the right distribution.
+
+2. **Climatology threshold quantile estimator** (`mhw_detection.py:68`,
+   `compute_climatology`). Currently `groupby("time.dayofyear").quantile(0.90)` → numpy
+   default `linear` (Hyndman-Fan type 7). Consider H-F type 8 (`alphap=1/3, betap=1/3`)
+   for skewed SST tails; ~0.05–0.15°C shift in coastal/upwelling cells. Add bootstrap CI
+   on the threshold (30-yr × 11-day window ≈ 330 samples → SE ≈ 0.1–0.3°C) and propagate
+   through to SVaR CI.
+
+3. **Loss function** (`scripts/train_*.py`). Current MSE-on-SDD optimizes conditional
+   mean; insurance target is SVaR_95 (a quantile). Options: pinball loss at τ=0.95
+   (direct, loses mean calibration), multi-quantile head τ∈{0.5,0.9,0.95,0.99} with
+   summed pinball loss, or MSE + pinball auxiliary. Order matters: only worth doing
+   AFTER #1 — pinball on biased thresholds optimizes the wrong target.
+
+Prerequisite: P5 (30-yr OISST baseline) — without it, all three quantile decisions
+inherit a 2-yr-baseline bias that dominates the issues above.
