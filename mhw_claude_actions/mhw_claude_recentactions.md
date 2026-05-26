@@ -4,6 +4,16 @@
 
 ---
 
+## [2026-05-23] Session 36 — Matplotlib/Cartopy SVaR slide export
+
+- **New script** `scripts/export_svar_wn2_slides.py`: matplotlib + cartopy Mercator map of WN2 SVaR₉₅ cells.
+- Reuses `docs/data/svar_map.json` (270 ocean cells, lat 41–45, lon -71 to -66).
+- Custom colormap matching dashboard (blue→amber→red→dark red). 300 dpi, 11×8 in.
+- Output: `docs/assets/plots/dashboard/svar_map_wn2_slides.png`.
+- NaturalEarth 50m shapefiles auto-downloaded by cartopy on first run (now cached).
+
+---
+
 ## [2026-05-19] Session 35 — Dashboard polish, land mask, LinkedIn assets; project paused
 
 ### What happened
