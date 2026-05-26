@@ -108,15 +108,18 @@
     <h1>Marine Heatwave Risk Profiler</h1>
 
     <p class="hero-intro mx-auto">
-      The goal of this project is to fuse <strong>90-day atmospheric ensemble forecasts</strong>
-      with <strong>3D ocean depth data</strong> to predict marine heatwaves before they arrive.
+      Marine heatwave events translate directly into financial losses for aquaculture operators
+      and climate insurers, but the connection between ocean temperature anomalies and dollar
+      exposure has historically been opaque. This project builds that bridge: fusing
+      <strong>90-day atmospheric ensemble forecasts</strong> with <strong>3D ocean depth data</strong>
+      to translate climatological states (cumulative heat stress, subsurface temperature anomalies)
+      into forward-looking financial risk estimates stakeholders can act on.
       Google's WeatherNext&nbsp;2 model generates 64 independent atmosphere simulations per forecast;
       HYCOM tracks temperature, salinity, and currents at 10 depth levels below the surface.
-      A deep learning model learns to combine both streams and estimate cumulative heat stress
-      across every ocean cell in the Gulf of Maine, up to 90 days in advance, giving aquaculture
-      operators and climate insurers a forward-looking map of financial exposure.
-      The primary model uses <strong>WeatherNext 2</strong> — Google's most sophisticated new
-      foundation weather model — with <strong>ERA5</strong>, the established legacy atmospheric
+      A deep learning model combines both streams, mapping physical ocean conditions to financial
+      exposure across every Gulf of Maine cell up to 90 days in advance.
+      The primary model uses <strong>WeatherNext 2</strong>, Google's most sophisticated new
+      foundation weather model, with <strong>ERA5</strong>, the established legacy atmospheric
       reanalysis, as a comparison baseline.
     </p>
 
